@@ -25,13 +25,31 @@ export AWS_PROFILE=halo
 ```
 
 **IAM user with an access key.** Faster, and acceptable for a practice account.
-Create the user in the IAM console, attach the policy from step 3, create an
-access key of type *Command Line Interface*, then:
+
+The access key is something you *create* — there is nothing to look up, and the
+secret is shown exactly once. It is not your account number and not your console
+password.
+
+1. **IAM → Users → Create user.** Name it `halo-quote-copilot`. Do not give it
+   console access; this identity only makes API calls.
+2. On permissions, **Attach policies directly → Create inline policy → JSON**,
+   and paste the policy from step 3 below. Skipping this produces a key that
+   authenticates fine and gets `AccessDeniedException` on every Bedrock call.
+3. Open the user → **Security credentials** → **Access keys → Create access key**.
+4. Use case **Command Line Interface (CLI)**, acknowledge, Create.
+5. Copy both values, or download the CSV. Lose the secret and you delete the key
+   and make another — it cannot be retrieved.
+
+The key id starts `AKIA` and is 20 characters; the secret is 40.
 
 ```bash
 brew install awscli
 aws configure              # key, secret, region us-east-1, output json
 ```
+
+> Never create access keys on the **root** account. A leaked root key
+> compromises everything on the account, billing included. The IAM user above is
+> the right identity for this.
 
 Either way, confirm the identity resolves:
 
