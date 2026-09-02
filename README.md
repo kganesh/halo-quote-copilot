@@ -49,12 +49,28 @@ catalogue.
 
 ```
 src/halo/
-  domain/      the synthetic HALO business: org, catalog, supply, atlas, quote
-  platform/    contracts every agent obeys: identity, budget, outcome
+  domain/      the synthetic HALO business: org, catalog, supply, atlas, quote, request
+  platform/    contracts every agent obeys: identity, budget, outcome, bedrock
+  agents/      one function per agent, each returning an Outcome
   seed/        deterministic corpus generator + the written Atlas corpus
-tests/         schema, invariant, determinism and contract tests
+  cli.py       `halo quote "..."`
+tests/         schema, invariant, determinism, contract and agent tests
 reference/     the earlier MCP sample this build grew out of
 ```
+
+## Running a quote
+
+```bash
+halo quote "Customer wants 500 hoodies, 3-colour front print, Chicago by Oct 15, budget \$12k."
+```
+
+Needs AWS credentials in the environment and `anthropic.claude-sonnet-5` enabled
+for the account in the chosen region (Bedrock console → Model access). The
+command exits `2` on an escalation and `1` on a setup problem, and setup problems
+print what to do about them rather than a stack trace.
+
+At M1 every run escalates. That is the milestone working, not failing: the draft
+is entirely invented, and design rule 02 says an uncited figure is not an answer.
 
 ## The rules the code enforces
 
@@ -74,8 +90,8 @@ reference/     the earlier MCP sample this build grew out of
 | | | Status |
 |---|---|---|
 | M0 | Scaffolding and a synthetic HALO | done |
-| M1 | First Bedrock call — and a deliberately ungrounded quote | next |
-| M2 | The MCP tool plane | |
+| M1 | First Bedrock call — and a deliberately ungrounded quote | done |
+| M2 | The MCP tool plane | next |
 | M3 | Atlas RAG with real citations | |
 | M4 | Guardrails and the untrusted boundary | |
 | M5 | One principal, end to end | |
