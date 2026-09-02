@@ -60,6 +60,17 @@ reference/     the earlier MCP sample this build grew out of
 
 ## Running a quote
 
+First-time AWS setup is in [docs/aws-setup.md](docs/aws-setup.md) — about fifteen
+minutes, and nothing it provisions costs anything while idle. Check it with:
+
+```bash
+halo doctor
+```
+
+That verifies credentials, region, model access and then makes one deliberately
+tiny call, stopping at the first problem and naming the step that fixes it.
+
+
 ```bash
 halo quote "Customer wants 500 hoodies, 3-colour front print, Chicago by Oct 15, budget \$12k."
 ```

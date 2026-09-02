@@ -15,6 +15,8 @@ from decimal import Decimal
 import anthropic
 
 from halo.agents.drafter import draft_quote
+from halo.doctor import render as doctor_render
+from halo.doctor import run as doctor_run
 from halo.domain.request import UngroundedDraft
 from halo.platform.bedrock import DEFAULT_MODEL, DEFAULT_REGION, BedrockClient
 from halo.platform.budget import Budget, BudgetTracker
@@ -127,6 +129,10 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     parser = argparse.ArgumentParser(prog="halo", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
+    doctor = sub.add_parser("doctor", help="check the AWS setup a real call needs")
+    doctor.add_argument("--region", default=DEFAULT_REGION)
+    doctor.add_argument("--model", default=DEFAULT_MODEL)
+
     quote = sub.add_parser("quote", help="draft a quote from a seller's sentence")
     quote.add_argument("request", help="what the customer asked for, in plain English")
     quote.add_argument("--region", default=DEFAULT_REGION)
@@ -134,6 +140,11 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     quote.add_argument("--json", action="store_true", help="emit the raw Outcome as JSON")
 
     args = parser.parse_args(argv)
+
+    if args.command == "doctor":
+        checks, ok = doctor_run(args.region, args.model)
+        print(doctor_render(checks, ok, region=args.region, model=args.model))
+        return 0 if ok else 1
 
     tracker = BudgetTracker(DEFAULT_BUDGET)
     try:
