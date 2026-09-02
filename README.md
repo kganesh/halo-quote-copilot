@@ -1,0 +1,84 @@
+# HALO Quote Copilot
+
+A practice agentic platform on AWS Bedrock: one seller request becomes a draft
+quote where every number traces to a tool call or a cited document — or the run
+escalates and says why.
+
+**This is a learning build, not a production system.** All data is synthetic; no
+HALO systems, credentials or customer records are involved.
+
+Design and milestone plan: https://claude.ai/code/artifact/b3bf21a2-1e31-45c7-816b-66aa040ec8c3
+
+## The flow
+
+> Customer wants 500 hoodies, 3-colour front print, delivered to Chicago by
+> Oct 15, budget $12k.
+
+Answering that properly needs priced catalogue truth, supplier capacity on a
+specific day, written decoration policy, a transit calculation and a margin
+check — which is why it exercises an LLM, bounded agents, RAG, MCP tooling,
+guardrails and shared identity all at once.
+
+## Stack
+
+| Concern | Choice |
+|---|---|
+| Model | Claude Sonnet 5 on Amazon Bedrock (`anthropic.claude-sonnet-5`) |
+| Harness | Our own reasoning loop, containerized onto Bedrock AgentCore Runtime |
+| Vectors | pgvector on Postgres — Docker locally, Aurora Serverless v2 when deployed |
+| Tools | MCP servers over stdio, behind a gateway that allow-lists and audits |
+| Guardrails | Bedrock Guardrails, plus an evidence envelope around all fetched text |
+| Identity | Cognito → API Gateway JWT authorizer → `Principal` enforced at the tools |
+| Infra | Terraform |
+
+## Getting started
+
+```bash
+make install   # venv + editable install
+make seed      # regenerate the synthetic corpus into data/seed/
+make test
+make lint
+```
+
+`data/seed/` is generated, not committed. The generator is the source of truth
+and is deterministic — two runs on two machines produce identical files, so an
+evaluation regression later is a real regression rather than a reshuffled
+catalogue.
+
+## Layout
+
+```
+src/halo/
+  domain/      the synthetic HALO business: org, catalog, supply, atlas, quote
+  platform/    contracts every agent obeys: identity, budget, outcome
+  seed/        deterministic corpus generator + the written Atlas corpus
+tests/         schema, invariant, determinism and contract tests
+reference/     the earlier MCP sample this build grew out of
+```
+
+## The rules the code enforces
+
+1. **An agent returns an `Outcome`, never a string** — `completed`, `escalated`
+   or `refused`, and a stop must carry a reason (`platform/outcome.py`).
+2. **Evidence or escalate** — every figure in a `Quote` carries a `Citation`
+   whose ref resolves to a document chunk or a tool call (`domain/quote.py`).
+3. **Identity is a token that travels** — `Principal` is frozen at admission and
+   enforced at the tool boundary, never by the agent (`platform/identity.py`).
+4. **Tool output is data, never instruction** — arrives at M4.
+5. **Budgets are enforced, not requested** — wall clock, tokens, tool calls and
+   dollars, checked before every step (`platform/budget.py`).
+6. **Approval resumes, it doesn't restart** — arrives at M6.
+
+## Milestones
+
+| | | Status |
+|---|---|---|
+| M0 | Scaffolding and a synthetic HALO | done |
+| M1 | First Bedrock call — and a deliberately ungrounded quote | next |
+| M2 | The MCP tool plane | |
+| M3 | Atlas RAG with real citations | |
+| M4 | Guardrails and the untrusted boundary | |
+| M5 | One principal, end to end | |
+| M6 | Supervisor, bounded specialists, human approval | |
+| M7 | Observability and evaluation gates | |
+| M8 | Terraform up, Terraform down | |

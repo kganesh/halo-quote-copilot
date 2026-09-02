@@ -1,0 +1,22 @@
+VENV := .venv
+PY   := $(VENV)/bin/python
+
+.PHONY: install seed test lint clean
+
+install:
+	python3 -m venv $(VENV)
+	$(PY) -m pip install --quiet --upgrade pip
+	$(PY) -m pip install --quiet -e ".[dev]"
+
+seed:
+	$(PY) -m halo.seed.generate
+
+test:
+	$(VENV)/bin/pytest -q
+
+lint:
+	$(VENV)/bin/ruff check src tests
+	$(VENV)/bin/ruff format --check src tests
+
+clean:
+	rm -rf data/seed
