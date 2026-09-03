@@ -16,8 +16,13 @@ from pydantic import BaseModel
 
 from halo.platform.budget import BudgetTracker
 
-DEFAULT_MODEL = "anthropic.claude-sonnet-5"
-"""Bedrock model ids carry an `anthropic.` prefix; the bare id is the first-party one.
+DEFAULT_MODEL = "us.anthropic.claude-sonnet-4-6"
+"""The newest Sonnet this account can actually invoke.
+
+Sonnet 5 is the model this project was planned around, and the account is
+*authorized* for it — but Bedrock refuses the call with "not available for this
+account", in every region tried, and after the Anthropic use case form cleared.
+That is a tier the account is not offered, so 4.6 it is until that changes.
 
 Two different Bedrock surfaces accept two different id shapes, and an account may
 be entitled to one and not the other:

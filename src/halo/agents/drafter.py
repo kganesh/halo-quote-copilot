@@ -11,6 +11,8 @@ no path here that legitimately completes.
 
 from __future__ import annotations
 
+from datetime import date
+
 from halo.domain.request import UngroundedDraft
 from halo.platform.bedrock import ModelClient
 from halo.platform.budget import BudgetExceeded, BudgetTracker
@@ -24,9 +26,16 @@ You are drafting a preliminary quote for a HALO sales representative. HALO is a 
 distributor of branded merchandise: apparel, headwear, drinkware, bags and \
 promotional hard goods.
 
+Today's date is {today:%A %d %B %Y}. Sellers write dates without a year — resolve \
+a bare month and day to the next such date on or after today, never to a past one.
+
 Read the representative's request and produce a complete draft quote: line items \
 with quantities and unit prices, the decoration setup and per-unit run charges, a \
 shipping cost, and a ship date.
+
+`product_description` names the product alone — "mid-weight fleece hoodie", not \
+the whole request. Quantity, decoration, destination, date and budget each have \
+their own field; do not repeat them in the description.
 
 You have no access to HALO's catalogue, pricing system, supplier capacity or \
 policy documents in this draft.
@@ -44,11 +53,19 @@ def draft_quote(
     principal: Principal,
     client: ModelClient,
     tracker: BudgetTracker,
+    today: date | None = None,
 ) -> Outcome:
-    """Turn a seller's sentence into an unsourced draft and an honest escalation."""
+    """Turn a seller's sentence into an unsourced draft and an honest escalation.
+
+    `today` is injected rather than left to the model. Without it the first real
+    run resolved "by Oct 15" to 2025 — a date already past — because a model has
+    no clock and falls back on its training prior. Every downstream milestone
+    reasons about lead times against that date, so a silent year error would
+    poison capacity checks and promised ship dates alike.
+    """
     try:
         result = client.parse(
-            system=SYSTEM_PROMPT,
+            system=SYSTEM_PROMPT.format(today=today or date.today()),
             user=request_text,
             output_format=UngroundedDraft,
         )

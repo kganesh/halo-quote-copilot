@@ -64,7 +64,7 @@ class FakeModelClient:
         tracker: BudgetTracker | None = None,
         input_tokens: int = 1_450,
         output_tokens: int = 820,
-        model: str = "anthropic.claude-sonnet-5",
+        model: str = "us.anthropic.claude-sonnet-4-6",
     ) -> None:
         self.parsed = parsed if parsed is not None else a_draft()
         self.calls: list[dict] = []

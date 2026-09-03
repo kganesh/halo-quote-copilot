@@ -39,6 +39,16 @@ DEFAULT_BUDGET = Budget(
 )
 
 
+def money(amount: Decimal) -> str:
+    """Money always shows cents.
+
+    `decimal_places=2` on the schema is a maximum, not a fixed scale, so a model
+    that returns 19.5 validates fine and then prints as `19.5` in a column of
+    figures that all end in cents.
+    """
+    return f"{amount:,.2f}"
+
+
 def render(outcome: Outcome) -> str:
     lines: list[str] = []
     if outcome.payload:
@@ -61,15 +71,15 @@ def render(outcome: Outcome) -> str:
         for line in draft.lines:
             lines.append(
                 f"  {line.sku:<16} {line.description[:34]:<34} "
-                f"{line.quantity:>6} x {line.unit_price:>8} = {line.extended:>10}"
+                f"{line.quantity:>6} x {money(line.unit_price):>9} = {money(line.extended):>12}"
             )
-        lines.append(f"  {'':<16} {'decoration setup':<34} {draft.decoration_setup_fee:>29}")
-        lines.append(
-            f"  {'':<16} {'decoration run charge / unit':<34} "
-            f"{draft.decoration_run_charge_per_unit:>29}"
-        )
-        lines.append(f"  {'':<16} {'shipping':<34} {draft.shipping_cost:>29}")
-        lines.append(f"  {'':<16} {'TOTAL':<34} {draft.total:>29}")
+        for label, amount in (
+            ("decoration setup", draft.decoration_setup_fee),
+            ("decoration run charge / unit", draft.decoration_run_charge_per_unit),
+            ("shipping", draft.shipping_cost),
+            ("TOTAL", draft.total),
+        ):
+            lines.append(f"  {'':<16} {label:<34} {money(amount):>32}")
         lines.append(f"  ships {draft.promised_ship_date:%d %b %Y}")
 
         lines.append("")

@@ -39,7 +39,18 @@ def test_the_render_states_the_outcome_and_the_spend():
 def test_the_total_shown_is_the_computed_one_not_a_model_claim():
     """Money is arithmetic over the parts, never a number the model reported."""
     out = render(an_outcome())
-    assert str(a_draft().total) in out
+    assert f"{a_draft().total:,.2f}" in out
+
+
+def test_money_always_shows_cents():
+    """A model may return 19.5, which validates and then prints ragged."""
+    from decimal import Decimal
+
+    from halo.cli import money
+
+    assert money(Decimal("19.5")) == "19.50"
+    assert money(Decimal("150")) == "150.00"
+    assert money(Decimal("9750")) == "9,750.00"
 
 
 class TestSetupErrorsAreExplained:

@@ -90,7 +90,7 @@ def test_spend_is_recorded_against_the_budget(principal, tracker):
 
     assert outcome.usage.input_tokens == 1_450
     assert outcome.usage.output_tokens == 820
-    assert outcome.usage.usd == estimate_usd("anthropic.claude-sonnet-5", 1_450, 820)
+    assert outcome.usage.usd == estimate_usd("us.anthropic.claude-sonnet-4-6", 1_450, 820)
     assert outcome.usage.usd > Decimal("0")
 
 
@@ -122,3 +122,29 @@ def test_a_draft_must_name_at_least_one_assumption(principal, tracker):
 
     with pytest.raises(ValidationError):
         a_draft(assumptions=[])
+
+
+class TestTheModelIsToldWhatDayItIs:
+    """A model has no clock. The first real run resolved "by Oct 15" to a date
+    that had already passed."""
+
+    def test_todays_date_reaches_the_prompt(self, principal, tracker):
+        from datetime import date
+
+        client = FakeModelClient(tracker=tracker)
+        draft_quote(
+            REQUEST,
+            principal=principal,
+            client=client,
+            tracker=tracker,
+            today=date(2026, 9, 3),
+        )
+        system = client.calls[0]["system"]
+        assert "Thursday 03 September 2026" in system
+        assert "never to a past one" in system
+
+    def test_the_prompt_is_fully_rendered(self, principal, tracker):
+        """An unformatted placeholder would ship a literal brace to the model."""
+        client = FakeModelClient(tracker=tracker)
+        draft_quote(REQUEST, principal=principal, client=client, tracker=tracker)
+        assert "{today" not in client.calls[0]["system"]
