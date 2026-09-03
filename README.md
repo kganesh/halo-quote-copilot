@@ -19,6 +19,10 @@ specific day, written decoration policy, a transit calculation and a margin
 check — which is why it exercises an LLM, bounded agents, RAG, MCP tooling,
 guardrails and shared identity all at once.
 
+The full business domain — tenants, catalog, suppliers, margin policy, the
+Atlas corpus, and exactly which of it is wired up versus still sitting unread
+in the seed data — is in [docs/domain.md](docs/domain.md).
+
 ## Stack
 
 | Concern | Choice |
