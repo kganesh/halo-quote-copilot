@@ -125,69 +125,64 @@ confusion:
 
 ## 4. Model access
 
-Bedrock gates which foundation models an account may call, per region.
+**The Model access page is retired.** Serverless foundation models now enable
+themselves on first invocation. Two things still gate Anthropic models, and
+neither is on that page.
 
-1. Open the Bedrock console in **us-east-1**.
-2. Go to **Model access** in the left navigation.
-3. Enable the Anthropic Claude models.
-4. **Submit the Anthropic use case details form.** This is a separate step from
-   enabling the models and it is easy to miss. Until it is submitted, every
-   Anthropic model on the account fails with:
+### 4a. The use case details form
 
-   > Model use case details have not been submitted for this account.
+First-time users of Anthropic models must submit use case details once, for the
+whole account. Until then every Anthropic model fails with:
 
-   The form gates the whole provider, not one model, so no amount of switching
-   ids works around it.
+> Model use case details have not been submitted for this account.
 
-Two refusals get confused with each other here, and they are fixed in different
-places:
+Submit it through the console: **Bedrock → Model catalog →** a Claude model **→
+Open in Playground**. The form appears before the first message.
+
+You can check the state from the CLI without touching the console:
+
+```bash
+aws bedrock get-use-case-for-model-access --region us-east-1
+```
+
+`ResourceNotFoundException: You have not filled out the request form` means it is
+still outstanding. There is a `put-use-case-for-model-access` API, but it takes an
+opaque `formData` blob whose contents are your company and use-case details — fill
+it in yourself rather than have it generated.
+
+### 4b. Marketplace enablement, done by an admin
+
+For models served through AWS Marketplace, **a user with AWS Marketplace
+permissions must invoke the model once** to enable it account-wide. The narrow
+IAM policy in step 3 deliberately does not include those permissions.
+
+So do the playground step above as an **administrator**, not as the IAM user this
+project uses. After that first invocation, the narrow user can invoke normally.
+
+The agreement can also be accepted through the API, if you would rather not use
+the console:
+
+```bash
+aws bedrock list-foundation-model-agreement-offers \
+  --model-id anthropic.claude-sonnet-4-6 --region us-east-1
+# then, with the offerToken from that response:
+aws bedrock create-foundation-model-agreement \
+  --model-id anthropic.claude-sonnet-4-6 --offer-token <token> --region us-east-1
+```
+
+That accepts a commercial agreement on the account's behalf, so run it knowingly.
+
+### Which refusal is which
 
 | Message | Meaning |
 |---|---|
-| `use case details have not been submitted` | The provider-level form (step 4). Affects every Anthropic model. |
-| `<model> is not available for this account` | That model tier is not offered to the account. Enabling access will not change it; use a model the entitlement check passes for. |
+| `use case details have not been submitted` | Step 4a. Affects every Anthropic model; no id works around it. |
+| `<model> is not available for this account` | That model tier is not offered to the account. 4a and 4b will not change it — use a model the entitlement check passes for. |
 
-Note that `ListFoundationModels` shows the region's whole catalogue regardless of
-what the account may call, and `Model access` in the console can look green while
-invocation still fails. `halo doctor` uses `GetFoundationModelAvailability`
-instead, and only its final check — a real call — proves anything.
-
-Then confirm from the command line rather than trusting the console page:
-
-```bash
-aws bedrock list-foundation-models \
-  --by-provider anthropic \
-  --region us-east-1 \
-  --query 'modelSummaries[].modelId' --output table
-```
-
-If the model this project uses is not in that list, check the inference profiles
-too — several current models are only reachable through one:
-
-```bash
-aws bedrock list-inference-profiles \
-  --region us-east-1 \
-  --query 'inferenceProfileSummaries[].inferenceProfileId' --output table
-```
-
-Whichever id is actually available is the one to use. Pass it explicitly:
-
-```bash
-halo quote "..." --model us.anthropic.claude-sonnet-4-6
-```
-
-**Two Bedrock surfaces, two id shapes.** An account can be entitled to one and
-not the other, so the id shape decides which is called:
-
-| Id shape | Surface | Example |
-|---|---|---|
-| bare `anthropic.…` | Messages API on Bedrock (Mantle) | `anthropic.claude-sonnet-5` |
-| `us.` / `global.` prefix | `InvokeModel` (bedrock-runtime) | `us.anthropic.claude-sonnet-4-6` |
-
-`BedrockClient` picks the surface from the id, so moving between them is a
-`--model` change and nothing else.
-
----
+`ListFoundationModels` shows the region's whole catalogue regardless of what the
+account may call, so a model appearing there proves nothing. `halo doctor` uses
+`GetFoundationModelAvailability`, and only its final check — a real call — is
+conclusive.
 
 ## 5. A spend guardrail
 
