@@ -17,7 +17,21 @@ from pydantic import BaseModel
 from halo.platform.budget import BudgetTracker
 
 DEFAULT_MODEL = "anthropic.claude-sonnet-5"
-"""Bedrock model ids carry an `anthropic.` prefix; the bare id is the first-party one."""
+"""Bedrock model ids carry an `anthropic.` prefix; the bare id is the first-party one.
+
+Two different Bedrock surfaces accept two different id shapes, and an account may
+be entitled to one and not the other:
+
+- **Mantle** (the Messages API on Bedrock, preferred for new code) takes bare ids
+  like `anthropic.claude-sonnet-5`.
+- **InvokeModel** (the older bedrock-runtime path) takes a cross-region inference
+  profile id like `us.anthropic.claude-sonnet-4-6`, or a dated foundation-model id.
+
+`BedrockClient` picks the surface from the id shape, so switching between them is
+a `--model` change and nothing else.
+"""
+
+PROFILE_PREFIXES = ("us.", "eu.", "apac.", "global.")
 
 DEFAULT_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
@@ -26,19 +40,37 @@ DEFAULT_REGION = os.environ.get("AWS_REGION", "us-east-1")
 # treat these as estimates and check them against the Bedrock pricing page before
 # reading anything into a cost report.
 PRICE_PER_MTOK: dict[str, tuple[Decimal, Decimal]] = {
-    "anthropic.claude-sonnet-5": (Decimal("2.00"), Decimal("10.00")),
-    "anthropic.claude-opus-5": (Decimal("5.00"), Decimal("25.00")),
-    "anthropic.claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
+    "claude-sonnet-5": (Decimal("2.00"), Decimal("10.00")),
+    "claude-opus-5": (Decimal("5.00"), Decimal("25.00")),
+    "claude-sonnet-4-6": (Decimal("3.00"), Decimal("15.00")),
+    "claude-opus-4-5": (Decimal("5.00"), Decimal("25.00")),
+    "claude-sonnet-4-5": (Decimal("3.00"), Decimal("15.00")),
+    "claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
 }
+
+
+def _price_key(model: str) -> str | None:
+    """Reduce any Bedrock id shape to the model family the price table keys on.
+
+    `us.anthropic.claude-sonnet-4-6` and `anthropic.claude-sonnet-4-6-20260101-v1:0`
+    are the same model at the same price; keying on the full id would silently
+    price one of them at zero.
+    """
+    trimmed = model
+    for prefix in PROFILE_PREFIXES:
+        trimmed = trimmed.removeprefix(prefix)
+    trimmed = trimmed.removeprefix("anthropic.")
+    return next((key for key in PRICE_PER_MTOK if trimmed.startswith(key)), None)
 
 
 def estimate_usd(model: str, input_tokens: int, output_tokens: int) -> Decimal:
     """Cost of one call. Unknown models cost zero rather than raising — a budget
     is a safety rail, and failing a run over an unrecognised price would make it
     a hazard instead."""
-    if model not in PRICE_PER_MTOK:
+    key = _price_key(model)
+    if key is None:
         return Decimal("0.00")
-    price_in, price_out = PRICE_PER_MTOK[model]
+    price_in, price_out = PRICE_PER_MTOK[key]
     million = Decimal(1_000_000)
     cost = (Decimal(input_tokens) / million) * price_in + (
         Decimal(output_tokens) / million
@@ -87,9 +119,18 @@ class BedrockClient:
         model: str = DEFAULT_MODEL,
         tracker: BudgetTracker | None = None,
     ) -> None:
-        from anthropic import AnthropicBedrockMantle
+        from anthropic import AnthropicBedrock, AnthropicBedrockMantle
 
-        self._client = AnthropicBedrockMantle(aws_region=region)
+        # An inference-profile id only means something to InvokeModel; a bare id
+        # only means something to Mantle. Choosing from the id keeps the two
+        # surfaces one flag apart instead of two code paths.
+        uses_profile = model.startswith(PROFILE_PREFIXES)
+        self._client = (
+            AnthropicBedrock(aws_region=region)
+            if uses_profile
+            else AnthropicBedrockMantle(aws_region=region)
+        )
+        self.surface = "invoke_model" if uses_profile else "mantle"
         self.model = model
         self.region = region
         self._tracker = tracker

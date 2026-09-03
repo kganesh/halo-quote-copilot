@@ -129,7 +129,28 @@ Bedrock gates which foundation models an account may call, per region.
 
 1. Open the Bedrock console in **us-east-1**.
 2. Go to **Model access** in the left navigation.
-3. Enable the Anthropic Claude models. Access is usually granted immediately.
+3. Enable the Anthropic Claude models.
+4. **Submit the Anthropic use case details form.** This is a separate step from
+   enabling the models and it is easy to miss. Until it is submitted, every
+   Anthropic model on the account fails with:
+
+   > Model use case details have not been submitted for this account.
+
+   The form gates the whole provider, not one model, so no amount of switching
+   ids works around it.
+
+Two refusals get confused with each other here, and they are fixed in different
+places:
+
+| Message | Meaning |
+|---|---|
+| `use case details have not been submitted` | The provider-level form (step 4). Affects every Anthropic model. |
+| `<model> is not available for this account` | That model tier is not offered to the account. Enabling access will not change it; use a model the entitlement check passes for. |
+
+Note that `ListFoundationModels` shows the region's whole catalogue regardless of
+what the account may call, and `Model access` in the console can look green while
+invocation still fails. `halo doctor` uses `GetFoundationModelAvailability`
+instead, and only its final check — a real call — proves anything.
 
 Then confirm from the command line rather than trusting the console page:
 
@@ -152,8 +173,19 @@ aws bedrock list-inference-profiles \
 Whichever id is actually available is the one to use. Pass it explicitly:
 
 ```bash
-halo quote "..." --model us.anthropic.claude-sonnet-5
+halo quote "..." --model us.anthropic.claude-sonnet-4-6
 ```
+
+**Two Bedrock surfaces, two id shapes.** An account can be entitled to one and
+not the other, so the id shape decides which is called:
+
+| Id shape | Surface | Example |
+|---|---|---|
+| bare `anthropic.…` | Messages API on Bedrock (Mantle) | `anthropic.claude-sonnet-5` |
+| `us.` / `global.` prefix | `InvokeModel` (bedrock-runtime) | `us.anthropic.claude-sonnet-4-6` |
+
+`BedrockClient` picks the surface from the id, so moving between them is a
+`--model` change and nothing else.
 
 ---
 

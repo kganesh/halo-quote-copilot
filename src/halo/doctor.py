@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+import anthropic
 from pydantic import BaseModel
 
 
@@ -54,11 +55,16 @@ def check_region(region: str) -> Check:
 
 
 def check_model_available(region: str, model: str) -> Check:
-    """Ask Bedrock what it actually has, rather than trusting the console page.
+    """Whether the account is *entitled* to this model, not merely whether
+    Bedrock offers it.
 
-    A listing failure is reported as a pass with a caveat: the invoke check below
-    is the real test, and a missing `ListFoundationModels` permission should not
-    read as "the model is unavailable".
+    `ListFoundationModels` returns the region's whole catalogue regardless of
+    what the account may call, so membership there reports a pass for a model
+    that 403s on the very next line. `GetFoundationModelAvailability` answers the
+    question actually being asked.
+
+    A failure to *query* is still a pass with a caveat: a missing listing
+    permission is not a missing model, and the invoke check settles it either way.
     """
     try:
         import boto3
@@ -66,30 +72,49 @@ def check_model_available(region: str, model: str) -> Check:
     except ImportError:  # pragma: no cover
         return Check("model access", True, "not checked (boto3 missing)")
 
-    bare = model.split(".", 1)[1] if model.startswith(("us.", "eu.", "apac.")) else model
+    from halo.platform.bedrock import PROFILE_PREFIXES
+
+    bare = model
+    for prefix in PROFILE_PREFIXES:
+        bare = bare.removeprefix(prefix)
+
     try:
         client = boto3.client("bedrock", region_name=region)
-        available = {m["modelId"] for m in client.list_foundation_models()["modelSummaries"]}
+        catalogue = {m["modelId"] for m in client.list_foundation_models()["modelSummaries"]}
     except (BotoCoreError, ClientError) as exc:
-        return Check("model access", True, f"not checked ({str(exc).split(chr(10))[0][:60]})")
+        return Check("entitlement", True, f"not checked ({str(exc).split(chr(10))[0][:60]})")
 
-    if any(entry.startswith(bare) for entry in available):
-        return Check("model access", True, f"{model} listed in {region}")
+    match = next((entry for entry in sorted(catalogue) if entry.startswith(bare)), None)
+    if match is None:
+        offered = sorted(m for m in catalogue if m.startswith("anthropic."))[-3:]
+        return Check(
+            "entitlement",
+            False,
+            f"{model} is not in the {region} catalogue. Newest offered: "
+            f"{', '.join(offered) or 'none'}",
+            "aws-setup.md step 4 — pass --model with an id Bedrock lists",
+        )
 
-    anthropic_models = sorted(m for m in available if m.startswith("anthropic."))
-    hint = ", ".join(anthropic_models[:4]) or "none"
+    try:
+        availability = client.get_foundation_model_availability(modelId=match)
+    except (BotoCoreError, ClientError) as exc:
+        return Check("entitlement", True, f"not checked ({str(exc).split(chr(10))[0][:60]})")
+
+    authorized = availability.get("authorizationStatus")
+    entitled = availability.get("entitlementAvailability")
+    if authorized == "AUTHORIZED" and entitled == "AVAILABLE":
+        return Check("entitlement", True, f"{match} authorized in {region}")
+
     return Check(
-        "model access",
+        "entitlement",
         False,
-        f"{model} is not listed in {region}. Anthropic models present: {hint}",
-        "aws-setup.md step 4 — enable it under Model access, or pass --model",
+        f"{match}: authorization={authorized}, entitlement={entitled}",
+        "aws-setup.md step 4 — request access under Model access in the Bedrock console",
     )
 
 
 def check_invoke(region: str, model: str) -> Check:
     """The only check that proves anything: one real, tiny call."""
-    import anthropic
-
     from halo.platform.bedrock import BedrockClient
 
     try:
@@ -100,19 +125,10 @@ def check_invoke(region: str, model: str) -> Check:
             output_format=Ping,
             max_tokens=256,
         )
-    except anthropic.PermissionDeniedError as exc:
-        return Check(
-            "invoke",
-            False,
-            str(exc)[:120],
-            "aws-setup.md step 3 — IAM policy for bedrock:InvokeModel",
-        )
-    except anthropic.NotFoundError as exc:
-        return Check(
-            "invoke", False, str(exc)[:120], "aws-setup.md step 4 — model access, or a profile id"
-        )
+    except anthropic.APIStatusError as exc:
+        return Check("invoke", False, _bedrock_message(exc), _bedrock_fix(exc))
     except (anthropic.APIError, RuntimeError) as exc:
-        return Check("invoke", False, f"{type(exc).__name__}: {str(exc)[:100]}", "aws-setup.md")
+        return Check("invoke", False, f"{type(exc).__name__}: {str(exc)[:160]}", "aws-setup.md")
 
     return Check(
         "invoke",
@@ -120,6 +136,32 @@ def check_invoke(region: str, model: str) -> Check:
         f"{result.input_tokens} in + {result.output_tokens} out tokens, "
         f"${result.usd:.6f} estimated",
     )
+
+
+def _bedrock_message(exc: anthropic.APIStatusError) -> str:
+    """Bedrock puts the useful sentence inside the body; str(exc) buries it."""
+    body = exc.body if isinstance(exc.body, dict) else {}
+    nested = body.get("error", {}) if isinstance(body.get("error"), dict) else {}
+    message = body.get("message") or nested.get("message") or str(exc)
+    return f"{exc.status_code}: {message[:180]}"
+
+
+def _bedrock_fix(exc: anthropic.APIStatusError) -> str:
+    """Three refusals read alike and are fixed in three different places."""
+    text = _bedrock_message(exc).lower()
+    if "use case details" in text:
+        return (
+            "Bedrock console -> Model access -> submit the Anthropic use case details "
+            "form. It gates every Anthropic model on the account, whatever the id."
+        )
+    if "not available for this account" in text:
+        return (
+            "This model tier is not offered to the account. Use one the entitlement "
+            "check passes for, or follow the access route in the message."
+        )
+    if exc.status_code == 403:
+        return "aws-setup.md step 3 — IAM policy for bedrock:InvokeModel"
+    return "aws-setup.md step 4 — model access, or an inference-profile id"
 
 
 def run(region: str, model: str) -> tuple[list[Check], bool]:
