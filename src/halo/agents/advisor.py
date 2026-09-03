@@ -1,0 +1,188 @@
+"""M3: answer a policy question from the Atlas corpus, and prove the answer is in it.
+
+The M2 mechanic, moved from numbers to prose. There, a figure had to appear in
+the tool result it cited. Here, a claim has to appear in the chunk it cites —
+and the model is made to hand back the exact span, verbatim, so the check is a
+substring test rather than a judgement call.
+
+That verbatim requirement is the whole design. Asking a model "which chunk did
+this come from" gets a confident id and a paraphrase; asking it to quote the
+sentence, then checking the sentence is really there, is the difference between
+a citation and a decoration.
+"""
+
+from __future__ import annotations
+
+import re
+
+from pydantic import BaseModel, Field
+
+from halo.domain.quote import Citation, CitationKind
+from halo.platform.bedrock import ModelClient
+from halo.platform.budget import BudgetExceeded, BudgetTracker
+from halo.platform.identity import Principal
+from halo.platform.outcome import Outcome, OutcomeStatus
+from halo.rag.retrieve import AtlasRetriever, ScoredChunk
+
+AGENT_NAME = "advisor"
+
+SYSTEM_PROMPT = """\
+You answer questions about HALO's decoration standards, quoting policy and
+logistics, using only the numbered excerpts supplied with the question.
+
+For every factual claim in your answer, produce a finding containing:
+  - the claim itself, in your own words;
+  - the `chunk_id` of the excerpt it came from;
+  - `quote`: the exact sentence or bullet from that excerpt, copied character
+    for character. Do not paraphrase, tidy, join or shorten it. It is checked
+    against the excerpt verbatim.
+
+If the excerpts do not answer part of the question, put that part in
+`unsupported` and leave it out of the answer. An excerpt that is merely related
+is not an answer, and no excerpt at all is a better outcome than a plausible
+guess.
+"""
+
+
+class Finding(BaseModel):
+    """One claim and the span of text that supports it."""
+
+    claim: str = Field(min_length=1)
+    chunk_id: str = Field(pattern=r"^atl-[a-z0-9-]+#[a-z0-9-]+$")
+    quote: str = Field(min_length=1)
+
+
+class PolicyAnswer(BaseModel):
+    answer: str = Field(min_length=1)
+    findings: list[Finding] = Field(default_factory=list)
+    unsupported: list[str] = Field(default_factory=list)
+
+
+def _normalise(text: str) -> str:
+    """Collapse whitespace so a quote that crossed a line break still matches.
+
+    Deliberately no other leniency. Lowercasing or stripping punctuation would
+    start letting near-quotes through, and a near-quote is exactly the thing this
+    is meant to catch.
+    """
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def verify(answer: PolicyAnswer, retrieved: list[ScoredChunk]) -> list[str]:
+    """Problems with the answer's grounding. Empty means every claim checks out."""
+    by_id = {hit.chunk.id: hit.chunk for hit in retrieved}
+    problems: list[str] = []
+
+    for finding in answer.findings:
+        chunk = by_id.get(finding.chunk_id)
+        if chunk is None:
+            problems.append(f"cites {finding.chunk_id}, which was not among the excerpts supplied")
+        elif _normalise(finding.quote) not in _normalise(chunk.text):
+            problems.append(
+                f"the quote attributed to {finding.chunk_id} is not in it: {finding.quote[:70]!r}"
+            )
+    return problems
+
+
+def _prompt(question: str, retrieved: list[ScoredChunk]) -> str:
+    excerpts = "\n\n".join(
+        f"[{hit.chunk.id}] {hit.chunk.doc_title} — {hit.chunk.heading}\n{hit.chunk.text}"
+        for hit in retrieved
+    )
+    return f"QUESTION\n{question}\n\nEXCERPTS\n{excerpts}"
+
+
+def answer_policy_question(
+    question: str,
+    *,
+    principal: Principal,
+    client: ModelClient,
+    retriever: AtlasRetriever,
+    tracker: BudgetTracker,
+    limit: int = 6,
+) -> tuple[Outcome, list[ScoredChunk]]:
+    """Retrieve, answer, verify. Returns the outcome and what was retrieved."""
+    retrieved = retriever.search(question, limit=limit)
+
+    if not retrieved:
+        return (
+            Outcome(
+                status=OutcomeStatus.ESCALATED,
+                agent=AGENT_NAME,
+                escalation_reason="the Atlas corpus returned nothing for this question",
+                next_state="needs_human_answer",
+                usage=tracker.usage,
+            ),
+            retrieved,
+        )
+
+    try:
+        result = client.parse(
+            system=SYSTEM_PROMPT,
+            user=_prompt(question, retrieved),
+            output_format=PolicyAnswer,
+        )
+    except BudgetExceeded as exc:
+        return (
+            Outcome(
+                status=OutcomeStatus.ESCALATED,
+                agent=AGENT_NAME,
+                escalation_reason=f"budget exhausted before answering: {exc}",
+                next_state="await_budget_increase",
+                usage=tracker.usage,
+            ),
+            retrieved,
+        )
+
+    parsed = result.parsed
+
+    if problems := verify(parsed, retrieved):
+        return (
+            Outcome(
+                status=OutcomeStatus.ESCALATED,
+                agent=AGENT_NAME,
+                payload=parsed.model_dump(mode="json"),
+                escalation_reason="the answer could not be traced to the excerpts it "
+                f"cites: {'; '.join(problems)}",
+                next_state="needs_regrounding",
+                usage=tracker.usage,
+            ),
+            retrieved,
+        )
+
+    if not parsed.findings:
+        return (
+            Outcome(
+                status=OutcomeStatus.ESCALATED,
+                agent=AGENT_NAME,
+                payload=parsed.model_dump(mode="json"),
+                escalation_reason="the corpus does not cover this question: "
+                + ("; ".join(parsed.unsupported) or "no supporting excerpt found"),
+                next_state="needs_human_answer",
+                usage=tracker.usage,
+            ),
+            retrieved,
+        )
+
+    citations = [
+        Citation(
+            kind=CitationKind.CHUNK,
+            ref=finding.chunk_id,
+            supporting_text=finding.quote,
+        )
+        for finding in parsed.findings
+    ]
+    payload = parsed.model_dump(mode="json")
+    payload["retrieved"] = [hit.chunk.id for hit in retrieved]
+
+    return (
+        Outcome(
+            status=OutcomeStatus.COMPLETED,
+            agent=AGENT_NAME,
+            payload=payload,
+            evidence=citations,
+            next_state="answered",
+            usage=tracker.usage,
+        ),
+        retrieved,
+    )

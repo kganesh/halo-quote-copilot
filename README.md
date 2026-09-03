@@ -29,7 +29,7 @@ in the seed data — is in [docs/domain.md](docs/domain.md).
 |---|---|
 | Model | Claude Sonnet 4.6 on Amazon Bedrock (`global.anthropic.claude-sonnet-4-6`) |
 | Harness | Our own reasoning loop, containerized onto Bedrock AgentCore Runtime |
-| Vectors | pgvector on Postgres — Docker locally, Aurora Serverless v2 when deployed |
+| Vectors | SQLite + Titan v2 embeddings locally; pgvector behind the same `VectorStore` protocol when the corpus outgrows it |
 | Tools | MCP servers over stdio, behind a gateway that allow-lists and audits |
 | Guardrails | Bedrock Guardrails, plus an evidence envelope around all fetched text |
 | Identity | Cognito → API Gateway JWT authorizer → `Principal` enforced at the tools |
@@ -54,7 +54,9 @@ catalogue.
 ```
 src/halo/
   domain/      the synthetic HALO business: org, catalog, supply, atlas, quote, request
-  platform/    contracts every agent obeys: identity, budget, outcome, bedrock
+  platform/    contracts every agent obeys: identity, budget, outcome, bedrock, gateway, ledger
+  rag/         chunk, embed, store, bm25, hybrid retrieve, ingest, evaluate
+  evals/       golden sets the CLI runs
   agents/      one function per agent, each returning an Outcome
   seed/        deterministic corpus generator + the written Atlas corpus
   cli.py       `halo quote "..."`
@@ -84,8 +86,20 @@ halo source '{"product_description":"fleece hoodie","quantity":500,
               "decoration_method":"screen_print","imprint_colors":3,
               "ship_to_state":"IL","needed_by":"2026-11-30"}'
 
+# M3 — a policy question answered from the Atlas corpus, quoted verbatim
+halo ask "Can we rush a five colour screen print job?"
+
+# M3 — the 20-question golden set (live, ~$0.15)
+halo eval
+
 # what this has cost so far
 halo spend
+```
+
+Build the Atlas index once before `ask` or `eval`:
+
+```bash
+make ingest    # 25 documents -> 80 chunks, ~$0.0001
 ```
 
 Needs AWS credentials in the environment and `anthropic.claude-sonnet-5` enabled
@@ -116,8 +130,8 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
 | M0 | Scaffolding and a synthetic HALO | done |
 | M1 | First Bedrock call — and a deliberately ungrounded quote | done |
 | M2 | The MCP tool plane | done |
-| M3 | Atlas RAG with real citations | next |
-| M4 | Guardrails and the untrusted boundary | |
+| M3 | Atlas RAG with real citations | done |
+| M4 | Guardrails and the untrusted boundary | next |
 | M5 | One principal, end to end | |
 | M6 | Supervisor, bounded specialists, human approval | |
 | M7 | Observability and evaluation gates | |

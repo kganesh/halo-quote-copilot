@@ -15,6 +15,7 @@ from decimal import Decimal
 
 import anthropic
 
+from halo.agents.advisor import PolicyAnswer, answer_policy_question
 from halo.agents.drafter import draft_quote
 from halo.agents.sourcing import source_quote
 from halo.doctor import render as doctor_render
@@ -27,6 +28,9 @@ from halo.platform.budget import Budget, BudgetTracker
 from halo.platform.gateway import McpGateway, ToolSpec
 from halo.platform.identity import Principal, Role
 from halo.platform.outcome import Outcome, OutcomeStatus
+from halo.rag.embed import TitanEmbedder
+from halo.rag.retrieve import AtlasRetriever
+from halo.rag.store import DEFAULT_DB, SqliteVectorStore
 
 # Stands in until M5 mints a real principal from a Cognito token.
 DEMO_PRINCIPAL = Principal(
@@ -52,6 +56,13 @@ CATALOG = {
     "supplier.earliest_ship_date": ToolSpec("supplier.earliest_ship_date", 20),
     "shipping.estimate_freight": ToolSpec("shipping.estimate_freight", 10),
 }
+
+ADVISOR_BUDGET = Budget(
+    wall_clock_seconds=120,
+    max_tokens=60_000,
+    max_tool_calls=0,
+    max_usd=Decimal("0.50"),
+)
 
 SOURCING_BUDGET = Budget(
     wall_clock_seconds=300,
@@ -162,6 +173,54 @@ def explain(error: Exception, *, region: str, model: str) -> str:
     return f"{type(error).__name__}: {error}"
 
 
+def render_answer(outcome: Outcome, retrieved: list) -> str:
+    lines = ["RETRIEVED"]
+    for hit in retrieved:
+        lines.append(f"  {hit.score:.4f} [{hit.found_by:<7}] {hit.chunk.id}")
+
+    if outcome.payload:
+        answer = PolicyAnswer.model_validate(
+            {k: v for k, v in outcome.payload.items() if k != "retrieved"}
+        )
+        lines.append("")
+        lines.append("ANSWER")
+        for paragraph in answer.answer.split("\n"):
+            lines.append(f"  {paragraph}")
+
+        if answer.findings:
+            lines.append("")
+            lines.append(f"GROUNDED IN ({len(answer.findings)})")
+            for finding in answer.findings:
+                lines.append(f"  {finding.chunk_id}")
+                lines.append(f'    "{finding.quote[:96]}"')
+
+        if answer.unsupported:
+            lines.append("")
+            lines.append(f"NOT IN THE CORPUS ({len(answer.unsupported)})")
+            for item in answer.unsupported:
+                lines.append(f"  - {item}")
+
+    lines.append("")
+    lines.append(f"OUTCOME  {outcome.status.value}")
+    if outcome.escalation_reason:
+        lines.append(f"  {outcome.escalation_reason}")
+    usage = outcome.usage
+    lines.append(
+        f"  spent: {usage.input_tokens:,} in + {usage.output_tokens:,} out tokens, "
+        f"${usage.usd:.4f} (estimated)"
+    )
+    return "\n".join(lines)
+
+
+def _retriever(region: str) -> AtlasRetriever:
+    store = SqliteVectorStore(DEFAULT_DB)
+    if not store.all_chunks():
+        raise SetupError(
+            f"the Atlas index at {DEFAULT_DB} is empty.\n  Build it with: python -m halo.rag.ingest"
+        )
+    return AtlasRetriever(store, TitanEmbedder(region=region))
+
+
 def render_sourced(outcome: Outcome, audit: list) -> str:
     lines = ["TOOL CALLS"]
     for call in audit:
@@ -237,6 +296,18 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
 
     sub.add_parser("spend", help="what this project has spent on model calls")
 
+    ask = sub.add_parser("ask", help="answer a policy question from the Atlas corpus")
+    ask.add_argument("question")
+    ask.add_argument("--region", default=DEFAULT_REGION)
+    ask.add_argument("--model", default=DEFAULT_MODEL)
+    ask.add_argument("--limit", type=int, default=6, help="excerpts to supply")
+    ask.add_argument("--json", action="store_true")
+
+    evaluate = sub.add_parser("eval", help="run the Atlas golden set")
+    evaluate.add_argument("--region", default=DEFAULT_REGION)
+    evaluate.add_argument("--model", default=DEFAULT_MODEL)
+    evaluate.add_argument("--limit", type=int, default=6)
+
     source = sub.add_parser("source", help="source a quote from the MCP tool plane")
     source.add_argument("request_json", help="a QuoteRequest as JSON")
     source.add_argument("--region", default=DEFAULT_REGION)
@@ -277,6 +348,82 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
         )
         print("\nEstimated from first-party rates; Bedrock prices separately.")
         return 0
+
+    if args.command == "ask":
+        tracker = BudgetTracker(ADVISOR_BUDGET)
+        try:
+            client = client_factory(region=args.region, model=args.model, tracker=tracker)
+            outcome, retrieved = answer_policy_question(
+                args.question,
+                principal=DEMO_PRINCIPAL,
+                client=client,
+                retriever=_retriever(args.region),
+                tracker=tracker,
+                limit=args.limit,
+            )
+        except SetupError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        except (anthropic.APIError, RuntimeError) as error:
+            print(explain(error, region=args.region, model=args.model), file=sys.stderr)
+            return 1
+
+        ledger.record("ask", args.model, outcome.usage)
+        if args.json:
+            print(json.dumps(outcome.model_dump(mode="json"), indent=2))
+        else:
+            print(render_answer(outcome, retrieved))
+        return 0 if outcome.status is OutcomeStatus.COMPLETED else 2
+
+    if args.command == "eval":
+        from halo.evals.atlas_golden import GOLDEN
+        from halo.rag.evaluate import run_golden, summarise
+
+        tracker = BudgetTracker(
+            Budget(
+                wall_clock_seconds=1800,
+                max_tokens=2_000_000,
+                max_tool_calls=0,
+                max_usd=Decimal("2.00"),
+            )
+        )
+        try:
+            client = client_factory(region=args.region, model=args.model, tracker=tracker)
+            results = run_golden(
+                GOLDEN,
+                principal=DEMO_PRINCIPAL,
+                client=client,
+                retriever=_retriever(args.region),
+                tracker=tracker,
+                limit=args.limit,
+            )
+        except SetupError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        except (anthropic.APIError, RuntimeError) as error:
+            print(explain(error, region=args.region, model=args.model), file=sys.stderr)
+            return 1
+
+        for result in results:
+            mark = "PASS" if result.passed else "FAIL"
+            flags = (
+                f"r={'Y' if result.retrieved else 'n'} "
+                f"c={'Y' if result.cited else 'n'} "
+                f"q={'Y' if result.fact_in_quote else 'n'}"
+            )
+            print(f"  [{mark}] {flags}  {result.question[:62]}")
+            if not result.passed and result.detail:
+                print(f"         {result.detail[:100]}")
+
+        stats = summarise(results)
+        ledger.record("eval", args.model, tracker.usage)
+        print(
+            f"\nretrieval {stats['retrieval']}/{stats['total']}"
+            f"   cited {stats['cited']}/{stats['total']}"
+            f"   grounded {stats['grounded']}/{stats['total']}"
+            f"   ${tracker.usage.usd:.4f}"
+        )
+        return 0 if stats["grounded"] == stats["total"] else 2
 
     if args.command == "source":
         try:

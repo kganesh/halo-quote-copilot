@@ -1,7 +1,7 @@
 VENV := .venv
 PY   := $(VENV)/bin/python
 
-.PHONY: install seed test lint clean
+.PHONY: install seed ingest eval test lint clean
 
 install:
 	python3 -m venv $(VENV)
@@ -11,6 +11,13 @@ install:
 seed:
 	$(PY) -m halo.seed.generate
 
+ingest:
+	$(PY) -m halo.rag.ingest
+
+# Live: 20 questions against Bedrock, roughly $0.15 a run.
+eval:
+	$(VENV)/bin/halo eval
+
 test:
 	$(VENV)/bin/pytest -q
 
@@ -19,4 +26,4 @@ lint:
 	$(VENV)/bin/ruff format --check src tests
 
 clean:
-	rm -rf data/seed
+	rm -rf data/seed data/atlas.db
