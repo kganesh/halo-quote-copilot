@@ -156,8 +156,31 @@ For models served through AWS Marketplace, **a user with AWS Marketplace
 permissions must invoke the model once** to enable it account-wide. The narrow
 IAM policy in step 3 deliberately does not include those permissions.
 
-So do the playground step above as an **administrator**, not as the IAM user this
-project uses. After that first invocation, the narrow user can invoke normally.
+So the first invocation has to come from an **administrator**, not from the IAM
+user this project uses. After it, the narrow user can invoke normally.
+
+Either identity works:
+
+- **The account root user, or any identity with `AdministratorAccess`.** Simplest;
+  nothing to undo afterwards.
+- **This project's IAM user, temporarily.** Attach the AWS managed policy
+  `AWSMarketplaceManageSubscriptions` to it, do the playground step, then detach
+  it. Keeps the standing policy narrow while still allowing the one-time
+  subscribe.
+
+Console walkthrough, once signed in as that identity:
+
+1. Set the region selector (top right) to **US East (N. Virginia)**.
+2. **Amazon Bedrock → Model catalog** in the left navigation.
+3. Filter provider **Anthropic** and pick the model — `Claude Sonnet 4.6` for
+   this project.
+4. **Open in Playground.** On first use the Anthropic use case details form
+   appears; fill in the company and intended-use fields and submit.
+5. Send any message — "hi" is enough. *That* call is the enablement; opening the
+   page is not.
+6. Repeat step 3-5 for any other model you want enabled. Worth trying
+   `Claude Sonnet 5` while you are there: if it is not offered to the account it
+   will say so here too, which settles whether this project stays on 4.6.
 
 The agreement can also be accepted through the API, if you would rather not use
 the console:
