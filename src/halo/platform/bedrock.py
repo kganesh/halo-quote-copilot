@@ -16,8 +16,14 @@ from pydantic import BaseModel
 
 from halo.platform.budget import BudgetTracker
 
-DEFAULT_MODEL = "us.anthropic.claude-sonnet-4-6"
-"""The newest Sonnet this account can actually invoke.
+DEFAULT_MODEL = "global.anthropic.claude-sonnet-4-6"
+"""The newest Sonnet this account can invoke, on the cheaper routing.
+
+`global.` rather than `us.`: the Bedrock rate card prices the global profile at
+3.00/15.00 against the regional 3.30/16.50, for the same model. The trade is that
+a global request is served wherever there is capacity rather than pinned to a
+geography — irrelevant for synthetic practice data, worth a second thought for
+anything real.
 
 Sonnet 5 is the model this project was planned around, and the account is
 *authorized* for it — but Bedrock refuses the call with "not available for this
@@ -40,18 +46,29 @@ PROFILE_PREFIXES = ("us.", "eu.", "apac.", "global.")
 
 DEFAULT_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-# Dollars per million tokens, used to enforce the run budget — not to bill anyone.
-# Bedrock is partner-operated and prices separately from the first-party API, so
-# treat these as estimates and check them against the Bedrock pricing page before
-# reading anything into a cost report.
+# Dollars per million tokens, read from the Bedrock offer rate cards for
+# us-east-1 (`list-foundation-model-agreement-offers` -> usageBasedPricingTerm),
+# not from the first-party price list. The two differ, and the earlier
+# first-party figures under-reported this project's spend by about 10%.
+#
+# Two rates per model, because the id shape picks one:
+#   `us.` / regional profiles pay the higher "Geo" rate.
+#   `global.` profiles pay 10% less, in exchange for the request being served
+#   wherever there is capacity rather than pinned to a geography.
 PRICE_PER_MTOK: dict[str, tuple[Decimal, Decimal]] = {
-    "claude-sonnet-5": (Decimal("2.00"), Decimal("10.00")),
-    "claude-opus-5": (Decimal("5.00"), Decimal("25.00")),
-    "claude-sonnet-4-6": (Decimal("3.00"), Decimal("15.00")),
-    "claude-opus-4-5": (Decimal("5.00"), Decimal("25.00")),
-    "claude-sonnet-4-5": (Decimal("3.00"), Decimal("15.00")),
-    "claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
+    "claude-sonnet-4-6": (Decimal("3.30"), Decimal("16.50")),
+    "claude-opus-4-5": (Decimal("16.50"), Decimal("82.50")),
+    "claude-sonnet-4-5": (Decimal("3.30"), Decimal("16.50")),
+    "claude-haiku-4-5": (Decimal("1.10"), Decimal("5.50")),
 }
+
+GLOBAL_DISCOUNT = Decimal("0.909091")
+"""`global.` profiles bill 3.00/15.00 where regional bills 3.30/16.50."""
+
+CACHE_READ_FRACTION = Decimal("0.1")
+"""A cached input token costs a tenth of a fresh one — $0.33 against $3.30 on
+Sonnet 4.6. The sourcing loop resends its whole transcript every turn, so this is
+the lever to pull when a tool loop gets expensive."""
 
 
 def _price_key(model: str) -> str | None:
@@ -76,6 +93,9 @@ def estimate_usd(model: str, input_tokens: int, output_tokens: int) -> Decimal:
     if key is None:
         return Decimal("0.00")
     price_in, price_out = PRICE_PER_MTOK[key]
+    if model.startswith("global."):
+        price_in *= GLOBAL_DISCOUNT
+        price_out *= GLOBAL_DISCOUNT
     million = Decimal(1_000_000)
     cost = (Decimal(input_tokens) / million) * price_in + (
         Decimal(output_tokens) / million

@@ -254,7 +254,44 @@ and M3 are measured against.
 
 ## Cost note
 
-`PRICE_PER_MTOK` in `src/halo/platform/bedrock.py` currently holds first-party
-Anthropic rates. Bedrock is partner-operated and prices separately. The numbers
-drive the run budget, not a bill, but correct them from the Bedrock pricing page
-once the account is live so the ceiling means what it says.
+`PRICE_PER_MTOK` in `src/halo/platform/bedrock.py` holds the real Bedrock
+us-east-1 rates, read from the account's own offer rate card rather than a
+pricing page:
+
+```bash
+aws bedrock list-foundation-model-agreement-offers \
+  --model-id anthropic.claude-sonnet-4-6 --region us-east-1 \
+  --query 'offers[0].termDetails.usageBasedPricingTerm.rateCard[?dimension==`USE1_InputTokenCount` || dimension==`USE1_OutputTokenCount`]'
+```
+
+Three things that came out of reading it:
+
+- Bedrock is **not** first-party pricing. Sonnet 4.6 is $3.30 / $16.50 per
+  million tokens here, against $3.00 / $15.00 first-party — the earlier figures
+  under-reported spend by about 10%.
+- A **`global.` profile costs 10% less than the `us.` one** for the same model
+  ($3.00 / $15.00 against $3.30 / $16.50). The request is served wherever there
+  is capacity instead of pinned to a geography, which is fine for synthetic
+  practice data and worth a second thought for anything real. This project
+  defaults to `global.`.
+- A **cached input token costs a tenth of a fresh one** ($0.33 against $3.30).
+  A tool loop resends its transcript every turn, so prompt caching is the lever
+  when sourcing runs get expensive.
+
+## Why a model can be authorized and still refused
+
+`get-foundation-model-availability` reports four separate things, and only one of
+them is about permissions:
+
+```bash
+aws bedrock get-foundation-model-availability \
+  --model-id anthropic.claude-sonnet-5 --region us-east-1
+```
+
+On the account this was built against, Sonnet 5 returns
+`authorizationStatus: AUTHORIZED`, `entitlementAvailability: AVAILABLE`,
+`regionAvailability: AVAILABLE` — and `agreementAvailability: NOT_AVAILABLE`.
+Its offer carries **no priced regions at all**, where Sonnet 4.6's lists 21. There
+is nothing to subscribe to: AWS has not made that model tier available to the
+account, which is what "contact AWS Sales" in the error means. No IAM policy,
+region change or form submission moves it.

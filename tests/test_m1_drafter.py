@@ -148,3 +148,22 @@ class TestTheModelIsToldWhatDayItIs:
         client = FakeModelClient(tracker=tracker)
         draft_quote(REQUEST, principal=principal, client=client, tracker=tracker)
         assert "{today" not in client.calls[0]["system"]
+
+
+class TestBedrockRates:
+    """Rates come from the Bedrock offer rate card, not the first-party list."""
+
+    def test_the_global_profile_is_cheaper_than_the_regional_one(self):
+        regional = estimate_usd("us.anthropic.claude-sonnet-4-6", 1_000_000, 0)
+        globally = estimate_usd("global.anthropic.claude-sonnet-4-6", 1_000_000, 0)
+        assert regional == Decimal("3.30")
+        assert globally < regional
+        assert round(globally, 2) == Decimal("3.00")
+
+    def test_output_tokens_cost_five_times_input(self):
+        assert estimate_usd("us.anthropic.claude-sonnet-4-6", 0, 1_000_000) == Decimal("16.50")
+
+    def test_an_unpriced_model_costs_nothing_rather_than_raising(self):
+        """A budget is a safety rail; failing a run over an unknown price would
+        make it a hazard."""
+        assert estimate_usd("anthropic.claude-sonnet-5", 1000, 1000) == Decimal("0.00")

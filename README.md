@@ -23,7 +23,7 @@ guardrails and shared identity all at once.
 
 | Concern | Choice |
 |---|---|
-| Model | Claude Sonnet 4.6 on Amazon Bedrock (`us.anthropic.claude-sonnet-4-6`) |
+| Model | Claude Sonnet 4.6 on Amazon Bedrock (`global.anthropic.claude-sonnet-4-6`) |
 | Harness | Our own reasoning loop, containerized onto Bedrock AgentCore Runtime |
 | Vectors | pgvector on Postgres — Docker locally, Aurora Serverless v2 when deployed |
 | Tools | MCP servers over stdio, behind a gateway that allow-lists and audits |
