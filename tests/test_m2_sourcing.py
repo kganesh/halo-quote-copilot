@@ -158,3 +158,18 @@ class TestToolDeclarations:
         parameters = inspect.signature(getattr(modules[server_name], tool_name)).parameters
         for argument in tool["input_schema"]["properties"]:
             assert argument in parameters, f"{tool['name']}.{argument}"
+
+
+class TestOpenQuestionsAreNotFailures:
+    """A colour still to be chosen is a normal quote; an unsourced price is not
+    a quote at all. Folding both into `unresolved` made every realistic request
+    escalate."""
+
+    def test_open_questions_do_not_block_a_quote(self):
+        decision = a_decision(open_questions=["Garment colour not specified"])
+        assert verify(decision, an_audit()) == []
+        assert assemble(decision, an_audit()).total == Decimal("13025.00")
+
+    def test_an_unsourced_figure_is_still_a_blocker(self):
+        decision = a_decision(unresolved=["no freight quote available"])
+        assert decision.unresolved

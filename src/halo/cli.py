@@ -186,6 +186,12 @@ def render_sourced(outcome: Outcome, audit: list) -> str:
         ):
             lines.append(f"  {'':<16} {label:<30} {money(amount):>32}")
         lines.append(f"  ships {quote.promised_ship_date:%d %b %Y}")
+        if questions := outcome.payload.get("open_questions"):
+            lines.append("")
+            lines.append(f"OPEN QUESTIONS ({len(questions)}) — for order entry, not the quote")
+            for question in questions:
+                lines.append(f"  - {question}")
+
         lines.append("")
         lines.append(f"EVIDENCE ({len(quote.all_citations)} citations)")
         for citation in quote.all_citations:

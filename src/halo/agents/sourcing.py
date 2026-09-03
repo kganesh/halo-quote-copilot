@@ -61,6 +61,11 @@ You have no pricing, stock, capacity or freight knowledge of your own, and a
 figure you did not fetch is not usable — if a tool cannot give you something,
 record it in `unresolved` rather than supplying it yourself.
 
+`unresolved` is only for figures no tool could give you. Anything a person has to
+decide before the order is entered — a garment colour, a size breakdown, an
+imprint placement — goes in `open_questions`. A quote with open questions is still
+a quote; a quote with an unsourced figure is not.
+
 Work in this order:
 
 1. `search_products` to find a SKU matching the request.
@@ -208,6 +213,16 @@ class SourcingDecision(BaseModel):
     ship_date_tool_call_id: str = Field(pattern=r"^tc-\d{4}$")
     freight_cost: SourcedFigure
     unresolved: list[str] = Field(default_factory=list)
+    """Figures no tool could supply. Any entry here means there is no quote."""
+    open_questions: list[str] = Field(default_factory=list)
+    """Things a human must settle before the order is entered — a colour choice,
+    a size breakdown, an imprint placement.
+
+    Separate from `unresolved` because they are different failures. A quote with
+    a colour still to be chosen is a normal quote; a quote with an unsourced
+    price is not one at all. Folding both into `unresolved` made every realistic
+    request escalate, which would have made `completed` unreachable in practice
+    and the distinction meaningless."""
 
 
 def _values_under(result: Any, hints: tuple[str, ...]) -> set[str]:
@@ -462,10 +477,12 @@ async def source_quote(
         )
 
     quote = assemble(decision, audit)
+    payload = quote.model_dump(mode="json")
+    payload["open_questions"] = decision.open_questions
     return Outcome(
         status=OutcomeStatus.COMPLETED,
         agent=AGENT_NAME,
-        payload=quote.model_dump(mode="json"),
+        payload=payload,
         evidence=quote.all_citations,
         next_state="ready_for_margin_review",
         usage=tracker.usage,
