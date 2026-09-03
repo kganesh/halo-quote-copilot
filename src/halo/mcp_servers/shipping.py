@@ -1,8 +1,8 @@
-"""Carrier: how long it takes and what it costs to get there.
+"""Carrier: transit time and freight cost to the destination.
 
-Transit is quoted from the decorating supplier's hub, not from HALO's office —
-the distinction the freight policy makes, and the one most often lost when a
-promised delivery date turns out to be a promised *ship* date.
+Transit is measured from the decorating supplier's hub, not from HALO's office.
+The freight policy makes this distinction. It is the distinction that gets lost
+when a promised delivery date turns out to be a promised ship date.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from mcp.server.mcpserver import MCPServer
 
 server = MCPServer(name="halo-shipping", description="Ground transit estimates and freight")
 
-# Synthetic zone table, keyed on destination state from a Midwest hub. Matches
-# the transit days stated in atl-freight-and-zones.
+# Synthetic zone table, keyed by destination state, measured from a Midwest hub.
+# The transit days match those stated in atl-freight-and-zones.
 ZONE_BY_STATE = {
     "IL": 2,
     "WI": 2,
@@ -96,10 +96,10 @@ def estimate_freight(
 
 @server.tool()
 def delivery_date(ship_date: str, to_state: str) -> dict:
-    """When a shipment leaving on `ship_date` arrives, in business days.
+    """When a shipment leaving on `ship_date` arrives, counted in business days.
 
-    Quoting a delivery date without adding transit is the error this exists to
-    make hard.
+    This function exists to prevent one specific error: quoting a delivery date
+    without adding transit time to the ship date.
     """
     state = to_state.strip().upper()
     zone = ZONE_BY_STATE.get(state)

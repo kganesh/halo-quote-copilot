@@ -1,4 +1,5 @@
-"""A model client that returns a canned object, so the suite never bills anyone."""
+"""A model client that returns a fixed object, so the test suite never spends
+money."""
 
 from __future__ import annotations
 
@@ -51,10 +52,10 @@ def a_draft(**overrides) -> UngroundedDraft:
 
 
 class FakeModelClient:
-    """Records what it was asked and returns what it was told to.
+    """Records the calls it receives and returns a fixed response.
 
-    `tracker` is optional so a test can assert the agent's behaviour with and
-    without budget accounting attached.
+    `tracker` is optional, so a test can check the agent's behaviour both with
+    and without budget accounting.
     """
 
     def __init__(

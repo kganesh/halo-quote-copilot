@@ -1,7 +1,7 @@
-"""Supplier / decorator: can this be made, by whom, by when, at what decoration cost.
+"""Supplier and decorator: who can make this, by when, and at what decoration cost.
 
-Capacity is the point of this server. A lead time is an average; a date is a
-commitment, and only a day-by-day capacity check can support one.
+Capacity is the reason this server exists. A lead time is an average. A date is a
+commitment. Only a day-by-day capacity check can support a commitment.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ server = MCPServer(
     name="halo-supplier", description="Supplier stock, decoration capacity and charges"
 )
 
-# Kept in step with atl-screen-print-standards and atl-embroidery-standards. A
-# test asserts they still agree — a tool and a policy document that quietly
-# disagree is the failure a grounding check cannot see.
+# These match atl-screen-print-standards and atl-embroidery-standards. A test
+# checks that they still agree. If a tool and a policy document disagree, a
+# grounding check cannot detect it: both sources look valid on their own.
 SETUP_PER_COLOR = {"screen_print": Decimal("22.00"), "pad_print": Decimal("28.00")}
 SETUP_FLAT = {"laser_engrave": Decimal("40.00"), "embroidery": Decimal("65.00")}
 RUN_FIRST_COLOR = {
@@ -39,16 +39,16 @@ def check_inventory(
 ) -> list[dict]:
     """Which suppliers hold enough of a SKU to cover a quantity.
 
-    Sums across sizes, because a 500-piece apparel order is a size run rather
-    than 500 of one size.
+    Stock is summed across sizes. A 500-piece apparel order is a mix of sizes,
+    not 500 pieces of one size.
 
     Args:
         sku: the catalogue SKU.
         quantity: pieces needed.
         color: optional colour to restrict to.
-        method: optional decoration method — pass it and only suppliers who can
-            actually decorate the goods come back. Without it the answer includes
-            warehouses that cannot do the job, which is a trap rather than a fact.
+        method: optional decoration method. If you pass it, only suppliers that
+            can actually decorate the goods are returned. Without it, the answer
+            includes warehouses that cannot do the job.
     """
     offering = {s["id"] for s in suppliers() if method is None or method in s["decoration_methods"]}
     rows = [
@@ -62,10 +62,10 @@ def check_inventory(
     for row in rows:
         by_supplier[row["supplier_id"]] = by_supplier.get(row["supplier_id"], 0) + row["on_hand"]
 
-    # Decoration methods travel with the stock answer on purpose. Holding the
-    # goods and being able to decorate them are different capabilities, and a
-    # caller given only the first will pick a supplier that cannot do the job —
-    # which is exactly what happened before this field existed.
+    # The decoration methods are returned with the stock answer on purpose.
+    # Holding the goods and being able to decorate them are different
+    # capabilities. A caller given only the stock figure will pick a supplier
+    # that cannot do the job. That is what happened before this field existed.
     by_id = {s["id"]: s for s in suppliers()}
     return sorted(
         (
@@ -127,8 +127,9 @@ def find_capacity(method: str, units: int, not_before: str, not_after: str) -> l
 def get_decoration_charges(method: str, colors: int, units: int) -> dict:
     """Setup and per-unit run charges for a decoration job.
 
-    Colour count drives screen and pad print; embroidery and laser are flat,
-    because they are priced by stitches and by design respectively.
+    Colour count determines the price for screen print and pad print. Embroidery
+    and laser engraving have flat charges, because they are priced by stitch
+    count and by design respectively.
     """
     if method not in RUN_FIRST_COLOR and method != "embroidery":
         return {"error": f"unknown decoration method {method}"}
@@ -159,17 +160,18 @@ def get_decoration_charges(method: str, colors: int, units: int) -> dict:
 
 @server.tool()
 def earliest_ship_date(supplier_id: str, method: str, units: int, from_day: str) -> dict:
-    """First day this supplier can finish the run, capacity and lead time both.
+    """The first day this supplier can finish the run, using both capacity and
+    lead time.
 
-    Lead time alone answers "how long do you usually take"; this answers "when
-    will mine be done", which is the question a promised date rests on.
+    Lead time answers "how long do you usually take". This answers "when will my
+    order be finished". A promised date depends on the second question.
     """
     supplier = next((s for s in suppliers() if s["id"] == supplier_id), None)
     if supplier is None:
         return {"error": f"unknown supplier {supplier_id}"}
     if method not in supplier["decoration_methods"]:
-        # Naming who does offer it turns a dead end into a next step. An agent
-        # told only "no" will usually try another wrong supplier.
+        # Naming the suppliers that do offer it gives the caller a next step. An
+        # agent that receives only "no" usually tries another wrong supplier.
         alternatives = [s["name"] for s in suppliers() if method in s["decoration_methods"]]
         return {
             "error": f"{supplier['name']} does not offer {method}. "

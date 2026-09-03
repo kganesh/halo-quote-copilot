@@ -1,8 +1,8 @@
-"""`halo quote "..."` — the M1 demo.
+"""The command line interface.
 
-Prints the draft, then the reason it is not an answer. The point of the milestone
-is that both halves are visible at once: a quote that looks entirely credible,
-and a list of everything in it that was made up.
+`halo quote` prints an M1 draft and then the reason it is not an answer. Showing
+both at once is the point of that milestone: a quote that looks completely
+credible, next to a list of everything in it that was invented.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from halo.rag.embed import TitanEmbedder
 from halo.rag.retrieve import AtlasRetriever
 from halo.rag.store import DEFAULT_DB, SqliteVectorStore
 
-# Stands in until M5 mints a real principal from a Cognito token.
+# A placeholder until M5 creates a real principal from a Cognito token.
 DEMO_PRINCIPAL = Principal(
     user_id="usr-mwest01",
     tenant_id="tnt-mwest1",
@@ -47,7 +47,8 @@ SERVERS = {
 }
 
 # The filtered catalog: exactly the tools this agent's role was granted. A
-# capacity scan reads more rows than a price lookup, hence the longer patience.
+# capacity scan reads more rows than a price lookup, so it gets a longer
+# timeout.
 CATALOG = {
     "pim_oms.search_products": ToolSpec("pim_oms.search_products", 10),
     "pim_oms.get_price": ToolSpec("pim_oms.get_price", 10),
@@ -80,11 +81,11 @@ DEFAULT_BUDGET = Budget(
 
 
 def money(amount: Decimal) -> str:
-    """Money always shows cents.
+    """Format money with two decimal places.
 
-    `decimal_places=2` on the schema is a maximum, not a fixed scale, so a model
-    that returns 19.5 validates fine and then prints as `19.5` in a column of
-    figures that all end in cents.
+    `decimal_places=2` in the schema is a maximum, not a fixed scale. A model
+    that returns 19.5 passes validation and then prints as `19.5`, in a column
+    where every other figure ends in cents.
     """
     return f"{amount:,.2f}"
 
@@ -142,8 +143,9 @@ def render(outcome: Outcome) -> str:
 class SetupError(Exception):
     """A problem with the environment, not with the request.
 
-    Separated so the CLI can say what to do about it. Every one of these is
-    something the operator fixes once, and a stack trace helps with none of them.
+    This is separate so the CLI can print what to do about it. Each of these is
+    something the operator fixes once. A stack trace does not help with any of
+    them.
     """
 
 
@@ -285,8 +287,8 @@ async def _source(args, client_factory) -> tuple[Outcome, list]:
 
 
 def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
-    """`client_factory` exists so the whole CLI path can be exercised against a
-    fake model, without credentials and without spending anything."""
+    """`client_factory` exists so the whole CLI path can run against a fake
+    model, with no credentials and no spend."""
     parser = argparse.ArgumentParser(prog="halo", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -454,8 +456,8 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     else:
         print(render(outcome))
 
-    # Non-zero: an escalation is not a success, and M1 always escalates. Wiring
-    # this into the exit code now keeps a later CI gate honest.
+    # Return non-zero. An escalation is not a success, and M1 always escalates.
+    # Setting the exit code now means a later CI gate will behave correctly.
     return 0 if outcome.status.value == "completed" else 2
 
 

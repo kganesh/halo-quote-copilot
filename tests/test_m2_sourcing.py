@@ -1,4 +1,4 @@
-"""M2's real mechanic: a cited figure has to appear in the call it cites."""
+"""M2's core mechanism: a cited figure must appear in the call it cites."""
 
 from datetime import date
 from decimal import Decimal
@@ -74,8 +74,8 @@ class TestVerify:
         assert verify(a_decision(), an_audit()) == []
 
     def test_a_figure_the_tool_never_returned_is_caught(self):
-        """The id is real and the call succeeded — only the number is invented.
-        This is the failure that looks most like a correct answer."""
+        """The id is real and the call succeeded. Only the number is invented.
+        This failure looks more like a correct answer than any other."""
         decision = a_decision(
             unit_price=SourcedFigure(value=Decimal("19.99"), tool_call_id="tc-0002")
         )
@@ -100,8 +100,9 @@ class TestVerify:
         assert "promised_ship_date" in verify(decision, an_audit())[0]
 
     def test_a_figure_matching_an_unrelated_number_is_still_caught(self):
-        """estimate_freight returns zone 2 alongside the cost. A fabricated
-        $2.00 freight charge once matched the zone and verified clean."""
+        """`estimate_freight` returns zone 2 next to the cost. A fabricated
+        $2.00 freight charge once matched the zone number and passed
+        verification."""
         decision = a_decision(
             freight_cost=SourcedFigure(value=Decimal("2.00"), tool_call_id="tc-0005")
         )
@@ -132,9 +133,9 @@ class TestAssemble:
 
 
 class TestToolDeclarations:
-    """The model's tool list, the gateway's routes and the servers' functions
-    have to stay in step. Drift here is silent: the model calls a tool that no
-    longer exists and the loop just fails."""
+    """The model's tool list, the gateway's routes and the server functions must
+    stay consistent. A mismatch produces no error message: the model calls a tool
+    that does not exist, and the loop fails."""
 
     def test_every_declared_tool_has_a_route(self):
         assert {t["name"] for t in TOOLS} == set(TOOL_ROUTES)
@@ -161,8 +162,8 @@ class TestToolDeclarations:
 
 
 class TestOpenQuestionsAreNotFailures:
-    """A colour still to be chosen is a normal quote; an unsourced price is not
-    a quote at all. Folding both into `unresolved` made every realistic request
+    """A colour still to be chosen is a normal quote. An unsourced price is not
+    a quote at all. Putting both in `unresolved` made every realistic request
     escalate."""
 
     def test_open_questions_do_not_block_a_quote(self):

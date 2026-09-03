@@ -1,9 +1,10 @@
-"""The Atlas knowledge corpus, written rather than generated.
+"""The Atlas knowledge corpus. These documents are written, not generated.
 
-RAG quality at M3 is bounded by what these documents actually say, so they carry
-real, checkable numbers — screen counts, setup fees, lead times, margin floors.
-The golden evaluation set asks questions whose answers live only here, which is
-what makes a citation check meaningful: an answer that cannot point at one of
+RAG quality at M3 is limited by what these documents actually say, so they carry
+real, checkable numbers: screen counts, setup fees, lead times, margin floors.
+
+The golden evaluation set asks questions whose answers exist only here. That is
+what makes the citation check meaningful. An answer that cannot point at one of
 these paragraphs was invented.
 """
 
@@ -369,8 +370,8 @@ consumes, and the one most likely to carry something it should not.
     ),
 ]
 
-# Per-category care and specification sheets, expanded in the generator so each
-# product category has a retrievable document of its own.
+# Per-category care and specification sheets. The generator expands these so that
+# each product category has a document of its own that retrieval can find.
 CARE_SHEET_TEMPLATE = """
 # {category_title} — Specification and Care
 

@@ -1,12 +1,11 @@
 """Titan Text Embeddings v2 on Bedrock.
 
-Amazon's model rather than Anthropic's, which is a small piece of luck: it sits
-behind a different agreement, so it was invocable on this account while the
-Claude tiers were still gated.
+This is an Amazon model, not an Anthropic one. It sits behind a different
+Bedrock agreement, so it was usable on this account while the newer Claude tiers
+were still blocked.
 
-Vectors come back normalised to unit length, so cosine similarity is a plain dot
-product and the store never has to divide by a magnitude it would otherwise have
-to keep.
+The vectors come back normalised to unit length. Cosine similarity is therefore a
+dot product, and the store does not need to keep or divide by a magnitude.
 """
 
 from __future__ import annotations
@@ -18,8 +17,11 @@ from typing import Protocol
 MODEL_ID = "amazon.titan-embed-text-v2:0"
 DIMENSIONS = 1024
 PRICE_PER_MTOK = Decimal("0.02")
-"""Titan v2 input pricing. Embedding the whole Atlas corpus costs a fraction of
-a cent, which is why ingest re-embeds everything rather than tracking deltas."""
+"""Titan v2 input price per million tokens.
+
+Embedding the whole Atlas corpus costs a small fraction of a cent. That is why
+ingest re-embeds everything instead of tracking which documents changed.
+"""
 
 
 class Embedder(Protocol):
@@ -29,7 +31,8 @@ class Embedder(Protocol):
 
 
 class TitanEmbedder:
-    """One vector per input, in order. Titan takes a single text per call."""
+    """Returns one vector per input, in the same order. Titan accepts one text
+    per call."""
 
     def __init__(self, region: str = "us-east-1", model_id: str = MODEL_ID) -> None:
         import boto3

@@ -1,7 +1,7 @@
-"""`halo doctor` — a preflight for the AWS setup M1 needs.
+"""`halo doctor` checks the AWS setup that M1 needs.
 
-Checks run in dependency order and stop at the first failure, so the output is
-one thing to fix rather than a wall of red. Every failure names the step in
+The checks run in dependency order and stop at the first failure. The output is
+therefore one problem to fix, not a long list. Each failure names the step in
 `docs/aws-setup.md` that fixes it.
 """
 
@@ -55,16 +55,17 @@ def check_region(region: str) -> Check:
 
 
 def check_model_available(region: str, model: str) -> Check:
-    """Whether the account is *entitled* to this model, not merely whether
-    Bedrock offers it.
+    """Whether the account is entitled to this model, not whether Bedrock offers
+    it.
 
-    `ListFoundationModels` returns the region's whole catalogue regardless of
-    what the account may call, so membership there reports a pass for a model
-    that 403s on the very next line. `GetFoundationModelAvailability` answers the
-    question actually being asked.
+    `ListFoundationModels` returns the region's whole catalogue, regardless of
+    what the account may call. Checking membership there reports a pass for a
+    model that returns 403 on the next line.
+    `GetFoundationModelAvailability` answers the question we are actually asking.
 
-    A failure to *query* is still a pass with a caveat: a missing listing
-    permission is not a missing model, and the invoke check settles it either way.
+    If the query itself fails, this reports a pass with a note. A missing listing
+    permission is not the same as a missing model, and the invoke check below
+    settles it either way.
     """
     try:
         import boto3
@@ -114,7 +115,8 @@ def check_model_available(region: str, model: str) -> Check:
 
 
 def check_invoke(region: str, model: str) -> Check:
-    """The only check that proves anything: one real, tiny call."""
+    """The only check that proves anything: one real call, kept as small as
+    possible."""
     from halo.platform.bedrock import BedrockClient
 
     try:
@@ -139,7 +141,8 @@ def check_invoke(region: str, model: str) -> Check:
 
 
 def _bedrock_message(exc: anthropic.APIStatusError) -> str:
-    """Bedrock puts the useful sentence inside the body; str(exc) buries it."""
+    """Bedrock puts the useful sentence inside the response body. `str(exc)`
+    hides it."""
     body = exc.body if isinstance(exc.body, dict) else {}
     nested = body.get("error", {}) if isinstance(body.get("error"), dict) else {}
     message = body.get("message") or nested.get("message") or str(exc)
@@ -147,7 +150,8 @@ def _bedrock_message(exc: anthropic.APIStatusError) -> str:
 
 
 def _bedrock_fix(exc: anthropic.APIStatusError) -> str:
-    """Three refusals read alike and are fixed in three different places."""
+    """Three different refusals read similarly and are fixed in different
+    places."""
     text = _bedrock_message(exc).lower()
     if "use case details" in text:
         return (
@@ -165,7 +169,7 @@ def _bedrock_fix(exc: anthropic.APIStatusError) -> str:
 
 
 def run(region: str, model: str) -> tuple[list[Check], bool]:
-    """Run the checks in dependency order, stopping at the first failure."""
+    """Run the checks in dependency order and stop at the first failure."""
     checks: list[Check] = []
     for check in (
         lambda: check_credentials(),

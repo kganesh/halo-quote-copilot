@@ -1,15 +1,16 @@
 """Twenty questions whose answers exist only in the Atlas corpus.
 
-Each carries the chunk that should answer it and a fact that has to survive into
-the citation. Both halves are checked separately, because they fail for
-different reasons and the fix differs:
+Each question records the chunk that should answer it, and a fact that must
+appear in the citation. These two are checked separately, because they fail for
+different reasons and need different fixes:
 
-  retrieval  — did the right chunk reach the model at all?  (chunking, fusion)
-  grounding  — did the answer cite it, quoting text really in it?  (prompt, verify)
+  retrieval  Did the right chunk reach the model? Fixed in chunking or fusion.
+  grounding  Did the answer cite it, quoting text that is really in it? Fixed in
+             the prompt or in `verify`.
 
 The questions are written the way a seller would ask them, not the way the
-documents are written. A golden set phrased in the corpus's own vocabulary tests
-string matching and calls it retrieval.
+documents are written. A golden set that reuses the corpus's own wording tests
+string matching, not retrieval.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ class GoldenQuestion:
     expect_chunk: str
     """The chunk that should be retrieved and cited."""
     expect_fact: str
-    """A distinctive substring that must appear in the cited quote."""
+    """A distinctive piece of text that must appear in the cited quote."""
 
 
 GOLDEN: list[GoldenQuestion] = [

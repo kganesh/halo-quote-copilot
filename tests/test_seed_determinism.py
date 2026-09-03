@@ -1,5 +1,7 @@
-"""Two runs must be byte-identical, or an eval regression is indistinguishable
-from a reshuffled catalogue."""
+"""Two runs must produce identical bytes.
+
+Otherwise an eval regression cannot be told apart from a reshuffled catalogue.
+"""
 
 import filecmp
 

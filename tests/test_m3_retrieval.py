@@ -1,4 +1,4 @@
-"""Store and fusion, with a deterministic stand-in for the embedder."""
+"""The store and the fusion logic, using a deterministic fake embedder."""
 
 import pytest
 
@@ -8,10 +8,10 @@ from halo.rag.store import SqliteVectorStore, cosine
 
 
 class FakeEmbedder:
-    """Maps text to a vector by keyword, so relevance is asserted not sampled.
+    """Maps text to a vector by keyword, so relevance can be asserted exactly.
 
-    A real embedder makes these tests a network call and a judgement about
-    similarity; this one makes them arithmetic.
+    A real embedder would make these tests a network call plus a judgement about
+    similarity. This one makes them arithmetic.
     """
 
     AXES = ["screen", "embroidery", "freight", "rush"]
@@ -84,14 +84,14 @@ class TestStore:
 
 
 def test_cosine_of_a_unit_vector_with_itself_is_one():
-    """Titan normalises, so the dot product is the similarity."""
+    """Titan normalises its vectors, so the dot product is the similarity."""
     vector = [0.6, 0.8]
     assert cosine(vector, vector) == pytest.approx(1.0)
 
 
 class TestHybridFusion:
     def test_a_term_only_query_is_found_lexically(self, store):
-        """`$65.00` means nothing to this embedder's axes — only BM25 finds it."""
+        """`$65.00` matches none of this embedder's axes. Only BM25 finds it."""
         retriever = AtlasRetriever(store, FakeEmbedder())
         top = retriever.search("$65.00", limit=1)[0]
 
@@ -118,8 +118,8 @@ class TestHybridFusion:
         empty.close()
 
     def test_a_retrieved_chunk_becomes_a_valid_citation(self, store):
-        """The `Quote` validator rejects a CHUNK citation whose ref is not
-        `atl-`-prefixed, so retrieval has to produce ids that survive it."""
+        """The `Quote` validator rejects a CHUNK citation whose ref does not
+        start with `atl-`. Retrieval must produce ids that pass that check."""
         retriever = AtlasRetriever(store, FakeEmbedder())
         citation = retriever.search("rush", limit=1)[0].as_citation()
 

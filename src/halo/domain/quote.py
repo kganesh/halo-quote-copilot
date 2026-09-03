@@ -1,8 +1,8 @@
 """The quote itself, and the provenance rule that makes it trustworthy.
 
 Design rule 02: every number a seller might act on carries a citation. The
-assembler refuses to emit a quote with an uncited figure, which is what turns a
-hallucinated price from something you notice in a demo into a failing test.
+assembler refuses to produce a quote containing an uncited figure. This turns a
+hallucinated price from something you notice during a demo into a failing test.
 """
 
 from datetime import date
@@ -16,22 +16,22 @@ from halo.domain.catalog import DecorationMethod
 
 
 class CitationKind(StrEnum):
-    """Where a claim came from. There is no third option — that is the point."""
+    """Where a claim came from. There are only two options, deliberately."""
 
     CHUNK = "chunk"
     TOOL_CALL = "tool_call"
 
 
-# `min_length=1` alone accepts a single space, which is exactly the shape a
-# fabricated citation takes: present, non-empty, and carrying nothing.
+# `min_length=1` on its own accepts a single space. That is exactly what a
+# fabricated citation looks like: present, not empty, and containing nothing.
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class Citation(BaseModel):
-    """A pointer back to the evidence, plus the span that actually supports it.
+    """A reference to the evidence, plus the text that supports the claim.
 
-    `supporting_text` is stored rather than re-fetched so a stored quote stays
-    auditable after the underlying document is revised.
+    `supporting_text` is stored rather than fetched again later. A stored quote
+    stays auditable even after the source document is revised.
     """
 
     kind: CitationKind
@@ -73,7 +73,7 @@ class Quote(BaseModel):
 
     @property
     def all_citations(self) -> list[Citation]:
-        """Every citation the quote rests on, for the M7 evidence envelope."""
+        """Every citation the quote depends on. Used by the M7 evidence record."""
         found = list(self.decoration.citations) + list(self.shipping_citations)
         for line in self.lines:
             found.extend(line.citations)
@@ -91,12 +91,12 @@ class Quote(BaseModel):
 
     @model_validator(mode="after")
     def _citation_refs_match_their_kind(self) -> "Quote":
-        """Rule 02, enforced in the type rather than in a prompt.
+        """Rule 02, enforced by the type instead of by a prompt.
 
-        The field constraints already guarantee every figure carries a non-blank
-        citation. What they cannot see is a ref pointing at the wrong kind of
-        thing — a document id filed as a tool call, which reads fine in a quote
-        and breaks the audit trail at M7 when nothing resolves it.
+        The field constraints already require every figure to carry a non-empty
+        citation. What they cannot check is whether the reference points at the
+        right kind of source. A document id recorded as a tool call looks correct
+        in the quote, and breaks the M7 audit trail, where nothing resolves it.
         """
         for citation in self.all_citations:
             expected = "atl-" if citation.kind is CitationKind.CHUNK else "tc-"

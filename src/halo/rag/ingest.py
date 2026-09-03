@@ -1,9 +1,9 @@
 """Build the Atlas index: chunk, embed, store.
 
-Re-embeds the whole corpus every run rather than tracking what changed. At 80
-chunks and $0.02 per million tokens that is a fraction of a cent, and a delta
-tracker would be more code than the thing it optimises — with a stale-index
-failure mode that is genuinely hard to notice.
+This re-embeds the whole corpus on every run instead of tracking which documents
+changed. At 80 chunks and $0.02 per million tokens, a full rebuild costs a small
+fraction of a cent. Tracking changes would be more code than it saves, and a
+stale index is a failure that is hard to notice.
 """
 
 from __future__ import annotations

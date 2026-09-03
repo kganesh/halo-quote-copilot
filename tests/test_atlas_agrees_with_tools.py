@@ -1,9 +1,8 @@
-"""The margin floors the pricing tool will serve must match the ones the Atlas
-corpus states.
+"""The margin floors served by the pricing tool must match the Atlas corpus.
 
-This is the failure that grounding checks cannot catch: retrieval cites a real
-document, the tool returns a real number, and the two disagree. Better to fail
-here than to ship an answer that is correct and contradicts itself.
+A grounding check cannot catch this failure. Retrieval cites a real document, the
+tool returns a real number, and the two disagree. Both look valid on their own.
+Failing here is better than shipping an answer that contradicts itself.
 """
 
 import re

@@ -1,15 +1,18 @@
-"""Hybrid retrieval: what the vectors find, and what the words find.
+"""Hybrid retrieval: combining vector search and keyword search.
 
-Both halves are needed and they fail differently. Semantic search knows that
-"how long until it ships" is about lead time even with no shared words; it is
-unreliable about *which* number you asked for. Lexical search nails `$22.00`,
-`PMS` and `2XL`, and is helpless when the question shares no vocabulary with the
-answer.
+Both are needed, because they fail in different ways. Vector search understands
+that "how long until it ships" is about lead time, even when no words match. It
+is unreliable about which specific number you asked for. Keyword search finds
+`$22.00`, `PMS` and `2XL` exactly. It finds nothing when the question and the
+answer share no words.
 
-Fused with Reciprocal Rank Fusion — each result scores `1 / (k + rank)` in each
-list, summed. RRF combines rankings rather than scores, which matters because a
-BM25 score of 8.9 and a cosine of 0.71 are not on any common scale, and any
-attempt to weight them directly is a fudge factor waiting to be tuned forever.
+The two result lists are combined with Reciprocal Rank Fusion. Each result
+scores `1 / (k + rank)` in each list, and the scores are added.
+
+RRF combines rankings, not scores. This matters because a BM25 score of 8.9 and
+a cosine similarity of 0.71 are not on the same scale. Weighting them directly
+would require a constant that has no principled value and would need retuning
+whenever the corpus changes.
 """
 
 from __future__ import annotations
@@ -23,8 +26,11 @@ from halo.rag.embed import Embedder
 from halo.rag.store import VectorStore
 
 RRF_K = 60
-"""Standard RRF damping. Large enough that the gap between rank 1 and rank 2
-does not dominate, small enough that deep results still fade out."""
+"""The standard RRF constant.
+
+It is large enough that the gap between rank 1 and rank 2 does not dominate the
+result. It is small enough that low-ranked results still score close to zero.
+"""
 
 
 @dataclass(frozen=True)
@@ -36,18 +42,21 @@ class ScoredChunk:
 
     @property
     def found_by(self) -> str:
-        """Which half surfaced it — the useful thing to see when a result looks
-        wrong, and the reason both ranks are carried rather than just the score."""
+        """Which search found this result.
+
+        This is the useful thing to see when a result looks wrong. It is why the
+        object carries both ranks and not only the combined score.
+        """
         if self.vector_rank is not None and self.lexical_rank is not None:
             return "both"
         return "vector" if self.vector_rank is not None else "lexical"
 
     def as_citation(self) -> Citation:
-        """A retrieval result becomes evidence a Quote can carry.
+        """Convert a retrieval result into evidence a Quote can carry.
 
-        `supporting_text` is the chunk itself, not a summary of it: the whole
-        point of the citation check is that a reader — or a test — can look for
-        the claim inside it.
+        `supporting_text` is the chunk itself, not a summary. The citation check
+        works by looking for the claim inside this text. A reader can do the
+        same.
         """
         return Citation(
             kind=CitationKind.CHUNK,
@@ -57,7 +66,7 @@ class ScoredChunk:
 
 
 class AtlasRetriever:
-    """Reads the store once, then answers questions against it."""
+    """Reads the store once, then answers questions from it."""
 
     def __init__(self, store: VectorStore, embedder: Embedder) -> None:
         self._store = store
@@ -71,7 +80,8 @@ class AtlasRetriever:
         return len(self._by_id)
 
     def search(self, query: str, limit: int = 5, pool: int = 15) -> list[ScoredChunk]:
-        """Top `limit` chunks, fusing a `pool`-deep list from each half."""
+        """Return the top `limit` chunks, combining `pool` results from each
+        search."""
         if not self._by_id:
             return []
 

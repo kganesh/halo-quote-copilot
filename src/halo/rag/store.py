@@ -1,14 +1,15 @@
-"""Where chunks and their vectors live.
+"""Storage for chunks and their vectors.
 
-A protocol with one implementation today. `SqliteVectorStore` keeps the corpus
-in a single file and computes cosine similarity in Python — which sounds
-inadequate until you count: 80 chunks of 1,024 dimensions is 80,000
-multiply-adds per query, microseconds of work. At this size a vector database
-would be infrastructure to maintain in exchange for nothing.
+This is a protocol with one implementation today. `SqliteVectorStore` keeps the
+corpus in a single file and computes cosine similarity in Python.
 
-The protocol exists because that stops being true. When the corpus is large
-enough for the arithmetic to matter, a `PgVectorStore` implements this same
-three methods and nothing above it changes.
+That is enough at this size. The corpus has 80 chunks of 1,024 dimensions. One
+query is 80,000 multiply-add operations, which takes microseconds. A vector
+database would add infrastructure to maintain and would not make this faster.
+
+The protocol exists because that will not stay true. When the corpus is large
+enough for the arithmetic to matter, a `PgVectorStore` can implement these same
+three methods, and nothing above this layer changes.
 """
 
 from __future__ import annotations
@@ -39,13 +40,16 @@ def _unpack(blob: bytes) -> list[float]:
 
 
 def cosine(a: list[float], b: list[float]) -> float:
-    """A plain dot product: Titan returns unit-length vectors, so the magnitudes
-    are already 1 and dividing by them would be arithmetic with no effect."""
+    """A dot product.
+
+    Titan returns unit-length vectors, so both magnitudes are already 1.
+    Dividing by them would have no effect.
+    """
     return sum(x * y for x, y in zip(a, b, strict=True))
 
 
 class SqliteVectorStore:
-    """Chunks, metadata and vectors in one file. `:memory:` for tests."""
+    """Chunks, metadata and vectors in one file. Use `:memory:` in tests."""
 
     def __init__(self, path: str | Path = DEFAULT_DB) -> None:
         self.path = str(path)

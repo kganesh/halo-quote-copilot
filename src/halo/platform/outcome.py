@@ -1,8 +1,9 @@
 """Design rule 01: an agent returns an Outcome, never a string.
 
-Making this the only legal return is what turns a chatty model into a component
-that composes and can be tested. Every field an orchestrator needs to decide what
-happens next is here; nothing it needs is buried in prose.
+Making this the only allowed return type turns a conversational model into a
+component that can be composed and tested. Every field an orchestrator needs in
+order to decide the next step is a named field here. None of it is buried in
+prose.
 """
 
 from enum import StrEnum
@@ -23,10 +24,13 @@ class OutcomeStatus(StrEnum):
 class Outcome(BaseModel):
     """The result of one agent run.
 
-    `escalated` means the work is sound but a human has to decide (thin margin,
-    a date that cannot be met, an exhausted budget). `refused` means the request
-    should not be answered at all — out of scope, or blocked by a guardrail.
-    Collapsing the two would lose exactly the distinction the approval flow needs.
+    `escalated` means the work is correct but a human has to decide. Examples:
+    the margin is too low, the date cannot be met, the budget ran out.
+
+    `refused` means the request should not be answered at all. Examples: it is
+    out of scope, or a guardrail blocked it.
+
+    These are kept separate because the approval flow needs to tell them apart.
     """
 
     status: OutcomeStatus

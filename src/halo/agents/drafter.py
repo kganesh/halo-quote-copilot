@@ -1,12 +1,13 @@
 """M1: draft a quote with no catalogue, no supplier and no policy corpus.
 
-This agent is meant to be wrong. It exists so the failure it produces has a name
-and a shape before any of the machinery that fixes it is built — every entry in
-the draft's `assumptions` list is a tool call M2 adds or a retrieval M3 adds.
+This agent is meant to be wrong. It exists so that the failure has a name and a
+shape before we build the machinery that fixes it. Every entry in the draft's
+`assumptions` list becomes either a tool call added in M2 or a retrieval added
+in M3.
 
-It returns `escalated`, never `completed`. Design rule 02 says a figure without a
-citation is not an answer, and this agent cannot produce a citation, so there is
-no path here that legitimately completes.
+It returns `escalated` and never `completed`. Design rule 02 says a figure
+without a citation is not an answer. This agent cannot produce a citation, so it
+has no path that can legitimately complete.
 """
 
 from __future__ import annotations
@@ -26,16 +27,17 @@ You are drafting a preliminary quote for a HALO sales representative. HALO is a 
 distributor of branded merchandise: apparel, headwear, drinkware, bags and \
 promotional hard goods.
 
-Today's date is {today:%A %d %B %Y}. Sellers write dates without a year — resolve \
-a bare month and day to the next such date on or after today, never to a past one.
+Today's date is {today:%A %d %B %Y}. Sellers write dates without a year. Resolve \
+a bare month and day to the next such date on or after today. Never resolve it to \
+a date in the past.
 
 Read the representative's request and produce a complete draft quote: line items \
 with quantities and unit prices, the decoration setup and per-unit run charges, a \
 shipping cost, and a ship date.
 
-`product_description` names the product alone — "mid-weight fleece hoodie", not \
-the whole request. Quantity, decoration, destination, date and budget each have \
-their own field; do not repeat them in the description.
+`product_description` names only the product, for example "mid-weight fleece \
+hoodie". It is not the whole request. Quantity, decoration, destination, date and \
+budget each have their own field. Do not repeat them in the description.
 
 You have no access to HALO's catalogue, pricing system, supplier capacity or \
 policy documents in this draft.
@@ -57,11 +59,11 @@ def draft_quote(
 ) -> Outcome:
     """Turn a seller's sentence into an unsourced draft and an honest escalation.
 
-    `today` is injected rather than left to the model. Without it the first real
-    run resolved "by Oct 15" to 2025 — a date already past — because a model has
-    no clock and falls back on its training prior. Every downstream milestone
-    reasons about lead times against that date, so a silent year error would
-    poison capacity checks and promised ship dates alike.
+    We pass `today` in instead of letting the model decide it. Without it, the
+    first real run read "by Oct 15" as October 2025, a date that had already
+    passed. A model has no clock, so it uses whatever its training data suggests.
+    Later milestones calculate lead times from this date. A wrong year would
+    produce wrong capacity checks and wrong promised ship dates, with no error.
     """
     try:
         result = client.parse(
@@ -83,9 +85,9 @@ def draft_quote(
         status=OutcomeStatus.ESCALATED,
         agent=AGENT_NAME,
         payload=draft.model_dump(mode="json"),
-        # Deliberately empty. There is nothing to cite, and inventing a citation
-        # to make the outcome look complete is the exact failure this build is
-        # designed to catch.
+        # Deliberately empty. There is nothing to cite. Inventing a citation to
+        # make the outcome look complete is exactly the failure this project is
+        # built to catch.
         evidence=[],
         escalation_reason=(
             f"draft is ungrounded: {len(draft.assumptions)} figure(s) were assumed "

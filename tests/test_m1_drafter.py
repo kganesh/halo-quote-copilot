@@ -1,4 +1,5 @@
-"""M1's done-criteria: a credible draft, and a run that refuses to call it an answer."""
+"""M1's completion criteria: a credible draft, and a run that refuses to call it
+an answer."""
 
 from decimal import Decimal
 
@@ -41,7 +42,7 @@ def tracker() -> BudgetTracker:
 
 
 def test_a_draft_never_completes(principal, tracker):
-    """There is no citation available, so there is no legitimate completion."""
+    """No citation is available, so no completion is legitimate."""
     client = FakeModelClient(tracker=tracker)
     outcome = draft_quote(REQUEST, principal=principal, client=client, tracker=tracker)
 
@@ -67,7 +68,7 @@ def test_no_evidence_is_fabricated_to_look_complete(principal, tracker):
 
 
 def test_the_draft_survives_a_round_trip(principal, tracker):
-    """The payload has to reload as a draft — M2 picks it up from here."""
+    """The payload must reload as a draft. M2 continues from here."""
     client = FakeModelClient(tracker=tracker)
     outcome = draft_quote(REQUEST, principal=principal, client=client, tracker=tracker)
 
@@ -95,7 +96,7 @@ def test_spend_is_recorded_against_the_budget(principal, tracker):
 
 
 def test_an_exhausted_budget_escalates_rather_than_calling_the_model(principal):
-    """Rule 05: the ceiling stops the run before it spends, not after."""
+    """Rule 05: the limit stops the run before it spends, not after."""
     spent = BudgetTracker(
         Budget(
             wall_clock_seconds=120,
@@ -117,7 +118,7 @@ def test_an_exhausted_budget_escalates_rather_than_calling_the_model(principal):
 
 
 def test_a_draft_must_name_at_least_one_assumption(principal, tracker):
-    """A draft claiming it assumed nothing is the one shape that must not parse."""
+    """A draft that claims it assumed nothing must not parse."""
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
@@ -125,7 +126,7 @@ def test_a_draft_must_name_at_least_one_assumption(principal, tracker):
 
 
 class TestTheModelIsToldWhatDayItIs:
-    """A model has no clock. The first real run resolved "by Oct 15" to a date
+    """A model has no clock. On the first real run it read "by Oct 15" as a date
     that had already passed."""
 
     def test_todays_date_reaches_the_prompt(self, principal, tracker):
@@ -141,10 +142,10 @@ class TestTheModelIsToldWhatDayItIs:
         )
         system = client.calls[0]["system"]
         assert "Thursday 03 September 2026" in system
-        assert "never to a past one" in system
+        assert "Never resolve it to a date in the past" in system
 
     def test_the_prompt_is_fully_rendered(self, principal, tracker):
-        """An unformatted placeholder would ship a literal brace to the model."""
+        """An unformatted placeholder would send a literal brace to the model."""
         client = FakeModelClient(tracker=tracker)
         draft_quote(REQUEST, principal=principal, client=client, tracker=tracker)
         assert "{today" not in client.calls[0]["system"]
@@ -164,6 +165,6 @@ class TestBedrockRates:
         assert estimate_usd("us.anthropic.claude-sonnet-4-6", 0, 1_000_000) == Decimal("16.50")
 
     def test_an_unpriced_model_costs_nothing_rather_than_raising(self):
-        """A budget is a safety rail; failing a run over an unknown price would
-        make it a hazard."""
+        """A budget is a safety limit. Failing a run over an unknown price would
+        make the limit the cause of the failure."""
         assert estimate_usd("anthropic.claude-sonnet-5", 1000, 1000) == Decimal("0.00")

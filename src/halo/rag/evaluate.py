@@ -1,8 +1,9 @@
 """Run the golden set and report where it fails.
 
-Two rates, reported separately because they have different fixes. Retrieval
-recall is a chunking and fusion problem; grounding is a prompt and verification
-problem. A single blended score would hide which one is broken.
+The report gives two rates separately, because they have different causes and
+different fixes. Retrieval recall is a chunking and fusion problem. Grounding is
+a prompt and verification problem. A single combined score would hide which one
+is failing.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ class GoldenResult:
     question: str
     expect_chunk: str
     retrieved: bool
-    """The expected chunk reached the model."""
+    """The expected chunk was supplied to the model."""
     cited: bool
     """The answer cited it."""
     fact_in_quote: bool

@@ -1,8 +1,8 @@
-"""M3's mechanic: a quote is checked against the chunk, character for character.
+"""M3's mechanism: a quote is checked against the chunk, character for character.
 
-The value of these is the negative cases. 20/20 on the golden set proves the
-happy path; what proves the check is real is that a paraphrase — the thing a
-model produces naturally — is rejected.
+The negative cases are the valuable ones here. Scoring 20/20 on the golden set
+proves the working path. What proves the check is real is that a paraphrase is
+rejected, because a paraphrase is what a model produces by default.
 """
 
 from decimal import Decimal
@@ -90,8 +90,8 @@ class TestVerify:
         assert verify(an_answer(), [a_hit()]) == []
 
     def test_a_paraphrase_is_rejected(self):
-        """The failure mode this exists for. Every word is true and the chunk
-        says so — but it is not what the chunk says."""
+        """This is the failure the check exists for. Every word is true, and the
+        chunk supports it. But it is not the text the chunk contains."""
         answer = an_answer(
             findings=[
                 Finding(
@@ -118,7 +118,7 @@ class TestVerify:
         assert "was not among the excerpts supplied" in verify(answer, [a_hit()])[0]
 
     def test_a_quote_spanning_a_line_break_still_matches(self):
-        """Whitespace is normalised — and nothing else is, deliberately."""
+        """Whitespace is normalised. Nothing else is, deliberately."""
         answer = an_answer(
             findings=[
                 Finding(
@@ -131,7 +131,8 @@ class TestVerify:
         assert verify(answer, [a_hit()]) == []
 
     def test_case_is_not_normalised(self):
-        """Lowercasing would start letting near-quotes through."""
+        """Lowercasing would start accepting quotes that are close but not
+        exact."""
         answer = an_answer(
             findings=[
                 Finding(
@@ -204,7 +205,8 @@ class TestAnswerFlow:
         assert outcome.next_state == "needs_regrounding"
 
     def test_an_answer_with_no_findings_escalates_rather_than_completing(self, principal, tracker):
-        """A fluent answer citing nothing is the M1 failure wearing a new coat."""
+        """A fluent answer that cites nothing is the M1 failure in a new
+        form."""
         answer = an_answer(findings=[], unsupported=["nothing covers cancellation fees"])
         outcome, _ = answer_policy_question(
             "What is the cancellation fee?",

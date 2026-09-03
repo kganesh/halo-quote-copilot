@@ -1,23 +1,24 @@
-"""Every tool call an agent makes goes through here.
+"""Every tool call an agent makes goes through this module.
 
-The reference architecture puts a filtered catalog, typed schemas, timeouts,
-idempotency and audit between the agents and the enterprise systems. This is that
-layer, small enough to read in one sitting:
+The reference architecture places a filtered catalog, typed schemas, timeouts,
+idempotency and audit between the agents and the enterprise systems. This module
+is that layer. It does four things:
 
-- **Allow-list.** An agent can call the tools its role was granted and nothing
-  else. A tool that is not on the list is refused before the transport is touched.
-- **Timeout.** Per tool, because a catalogue search and a capacity scan do not
-  deserve the same patience.
+- **Allow-list.** An agent can call only the tools its role was granted. A tool
+  that is not on the list is refused before the transport is used.
+- **Timeout.** Set per tool. A catalogue search and a capacity scan need
+  different limits.
 - **Idempotency.** The same call with the same arguments inside one run returns
-  the recorded result. A model that asks twice gets one answer and one audit row.
-- **Audit.** Every call gets a `tool_call_id`, and that id is what a quote cites.
-  Provenance is a by-product of governance rather than a separate feature.
+  the recorded result. If the model asks twice, the tool runs once and the audit
+  gets one row for the real call and one for the replay.
+- **Audit.** Every call gets a `tool_call_id`. That id is what a quote cites, so
+  provenance comes from the governance layer instead of being a separate feature.
 
-Two implementations share all of that and differ only in how they reach the tool:
-`McpGateway` speaks MCP over stdio to real server processes, `InProcessGateway`
-calls the same Python functions directly. Tests use the second so the policy is
-tested without a subprocess per assertion, and one integration test covers the
-first.
+There are two implementations. They share all the logic above and differ only in
+how they reach the tool. `McpGateway` speaks MCP over stdio to real server
+processes. `InProcessGateway` calls the same Python functions directly. Tests use
+`InProcessGateway`, so the policy is tested without starting a subprocess for
+each assertion. One integration test covers `McpGateway`.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ class ToolSpec:
     """One entry in the filtered catalog."""
 
     name: str
-    """Qualified as `server.tool`, so an audit row says which system answered."""
+    """Written as `server.tool`, so an audit row shows which system answered."""
     timeout_seconds: float = 10.0
 
     @property
@@ -50,11 +51,11 @@ class ToolSpec:
 
 @dataclass
 class ToolCall:
-    """The audit record, and the thing a quote cites.
+    """The audit record. This is also what a quote cites.
 
-    `result` is kept whole rather than summarized: at M7 this envelope is what
-    lands in the evidence store, and a summary written now would be the wrong
-    summary then.
+    `result` stores the whole tool response, not a summary. At M7 this record is
+    what goes into the evidence store. A summary written now would probably not
+    contain what M7 needs.
     """
 
     id: str
@@ -73,8 +74,9 @@ class ToolCall:
 class ToolUnavailable(Exception):
     """The tool exists and was allowed, but the call could not be completed.
 
-    Distinct from a refusal: a refused call is a policy answer, an unavailable
-    one is an outage, and an agent has to escalate rather than proceed on either.
+    This is different from a refusal. A refusal is a policy decision. An
+    unavailable tool is an outage. The agent must escalate in both cases, but the
+    two need different fixes.
     """
 
 
@@ -86,7 +88,7 @@ class ToolGateway(Protocol):
 
 @dataclass
 class _GatewayPolicy:
-    """The half that has nothing to do with transport."""
+    """The parts of the gateway that do not depend on the transport."""
 
     allowed: dict[str, ToolSpec]
     tracker: BudgetTracker | None = None
@@ -143,10 +145,10 @@ class _BaseGateway(_GatewayPolicy):
                 self._invoke(spec, arguments), timeout=spec.timeout_seconds
             )
             # A tool that answers "no capacity for that" returns an error field
-            # rather than raising — it is a business answer, not a crash. Recording
-            # it as a success made `ok` mean "the transport worked", which is not
-            # what any caller wants it to mean: the model saw a successful call
-            # with no usable value in it and filled the gap itself.
+            # instead of raising an exception. That is a business answer, not a
+            # crash. Recording it as a success made `ok` mean "the transport
+            # worked". No caller wants that meaning. The model saw a successful
+            # call with no usable value in it, and invented the value itself.
             if isinstance(call.result, dict) and (message := call.result.get("error")):
                 call.error = str(message)
         except TimeoutError:
@@ -176,20 +178,21 @@ class InProcessGateway(_BaseGateway):
         function = self._functions.get(spec.name)
         if function is None:
             raise ToolUnavailable(f"{spec.name} has no implementation registered")
-        # Off the event loop, or the timeout is decorative: a synchronous call
-        # awaited directly blocks the loop, and `wait_for` never gets the chance
-        # to cancel it. Cancelling a thread does not stop it — the work runs on
-        # in the background — but the caller is freed, which is what a timeout
-        # is for.
+        # Run this off the event loop, or the timeout does nothing. A
+        # synchronous call awaited directly blocks the loop, so `wait_for` never
+        # gets a chance to cancel it. Cancelling a thread does not stop the
+        # thread. The work continues in the background. But the caller is freed,
+        # and that is what a timeout is for.
         return await asyncio.to_thread(lambda: function(**arguments))
 
 
 class McpGateway(_BaseGateway):
     """Speaks MCP over stdio to real server processes.
 
-    One session per server, opened once and held for the run. Opening a
-    connection per call would make the audit's duration column mostly process
-    startup, and would lose the protocol's own session semantics.
+    One session per server, opened once and held for the whole run. Opening a
+    connection per call would make the audit's duration column mostly measure
+    process startup. It would also lose the session semantics that the MCP
+    protocol defines.
     """
 
     def __init__(
@@ -233,14 +236,16 @@ class McpGateway(_BaseGateway):
         if result.is_error:
             raise ToolUnavailable(_text_of(result))
 
-        # Field names are snake_case in the 2.x SDK. `structured_content` is only
-        # populated when a tool declares an output schema; ours return plain JSON
-        # text, so the text block is the normal path rather than the fallback.
+        # Field names are snake_case in the 2.x SDK. `structured_content` is set
+        # only when a tool declares an output schema. Our tools return plain JSON
+        # text, so reading the text block is the normal path here, not a
+        # fallback.
         structured = result.structured_content
         if structured is not None:
-            # A bare list or scalar arrives wrapped under "result"; a dict arrives
-            # as itself. Unwrapping here keeps a tool's shape identical on both
-            # gateways, so an agent cannot tell which one it is talking to.
+            # A bare list or scalar arrives wrapped under "result". A dict
+            # arrives as itself. Unwrapping here keeps a tool's response shape
+            # identical on both gateways, so an agent cannot tell which gateway
+            # it is using.
             return (
                 structured.get("result", structured) if isinstance(structured, dict) else structured
             )

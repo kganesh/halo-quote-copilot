@@ -1,4 +1,5 @@
-"""The MCP servers, called as functions. Protocol wiring has its own test."""
+"""The MCP servers, called as plain functions. The protocol wiring has its own
+test."""
 
 from decimal import Decimal
 
@@ -83,8 +84,8 @@ class TestShipping:
 
 
 def test_decoration_charges_agree_with_the_policy_corpus():
-    """A tool and a policy document that quietly disagree is the failure a
-    grounding check cannot see."""
+    """A grounding check cannot detect a tool and a policy document that
+    disagree. Both look valid on their own."""
     from halo.seed.atlas_sources import CORE_DOCS
 
     body = next(b for i, _, _, _, b in CORE_DOCS if i == "atl-screen-print-standards")
@@ -98,8 +99,8 @@ def test_decoration_charges_agree_with_the_policy_corpus():
 
 def test_inventory_reports_what_each_supplier_can_decorate():
     """Holding the goods and being able to decorate them are different
-    capabilities; a caller given only the first picks a supplier that cannot
-    do the job."""
+    capabilities. A caller given only the stock figure picks a supplier that
+    cannot do the job."""
     sku = pim_oms.search_products("hoodie", category="knits")[0]["sku"]
     rows = supplier.check_inventory(sku, 100)
     assert rows
@@ -114,7 +115,7 @@ def test_inventory_filtered_by_method_excludes_warehouses_that_cannot_decorate()
 
 
 def test_a_method_refusal_names_who_can_do_it_instead():
-    """An agent told only "no" tries another wrong supplier."""
+    """An agent that receives only "no" tries another wrong supplier."""
     result = supplier.earliest_ship_date("sup-stitch", "screen_print", 100, "2026-09-07")
     assert "Suppliers that do:" in result["error"]
     assert "Apex Decorating" in result["error"]

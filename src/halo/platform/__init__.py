@@ -1,6 +1,6 @@
 """Platform contracts shared by every agent.
 
-These are deliberately pure data with no model calls, so the rules that matter
-most — identity, budgets, and the shape of an answer — are unit-testable on their
-own.
+These are plain data types with no model calls, deliberately. That makes the
+rules that matter most, which are identity, budgets and the structure of an
+answer, testable on their own.
 """

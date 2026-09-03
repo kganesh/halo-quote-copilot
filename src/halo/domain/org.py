@@ -1,14 +1,14 @@
-"""Who is asking, and what they are allowed to ask about.
+"""Who is asking, and which accounts they may ask about.
 
-Account scope lives here rather than on the agent because M5 enforces it at the
-tool boundary — an agent is never trusted to filter results it can already see.
+Account scope is defined here rather than in the agent. M5 enforces it at the
+tool boundary. An agent is never trusted to filter results it can already see.
 """
 
 from pydantic import BaseModel, Field
 
 
 class Tenant(BaseModel):
-    """A HALO business unit. Every record in the system belongs to exactly one."""
+    """A HALO business unit. Every record belongs to exactly one tenant."""
 
     id: str = Field(pattern=r"^tnt-[a-z0-9]{6}$")
     name: str
@@ -27,7 +27,7 @@ class Account(BaseModel):
 
 
 class Seller(BaseModel):
-    """A HALO sales rep. `account_ids` is the whole of their read scope."""
+    """A HALO sales representative. `account_ids` is their entire read scope."""
 
     id: str = Field(pattern=r"^usr-[a-z0-9]{6}$")
     tenant_id: str

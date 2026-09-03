@@ -1,4 +1,5 @@
-"""The lexical half — what vectors are unreliable about."""
+"""The keyword half of retrieval. This covers what vector search is unreliable
+about."""
 
 from halo.rag.bm25 import Bm25Index, tokenize
 
@@ -11,8 +12,8 @@ CORPUS = {
 
 
 def test_money_and_sizes_survive_tokenizing():
-    """A tokenizer that split on punctuation would turn $22.00 into 22 and 00,
-    losing that a price was asked about at all."""
+    """A tokenizer that split on punctuation would turn $22.00 into 22 and 00.
+    That loses the fact that the question was about a price."""
     tokens = tokenize("What is the $22.00 setup and the 2XL upcharge?")
     assert "$22.00" in tokens
     assert "2xl" in tokens
@@ -34,7 +35,7 @@ def test_a_rare_term_outranks_a_common_one():
 
 
 def test_a_query_with_no_matching_term_returns_nothing():
-    """Better than returning the least-bad document with a low score."""
+    """This is better than returning the closest document with a low score."""
     index = Bm25Index.build(CORPUS)
     assert index.search("kubernetes deployment topology") == []
 

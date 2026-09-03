@@ -1,4 +1,5 @@
-"""The preflight has to stop at the first problem and say which step fixes it."""
+"""The preflight must stop at the first problem and name the step that fixes
+it."""
 
 from halo.doctor import Check, render, run
 
@@ -71,7 +72,8 @@ def check_region_result(region: str) -> bool:
 
 
 def test_listing_failures_do_not_read_as_missing_model(monkeypatch):
-    """A missing ListFoundationModels permission is not the same as no access."""
+    """A missing ListFoundationModels permission is not the same as no model
+    access."""
     import botocore.exceptions
 
     class Boom:

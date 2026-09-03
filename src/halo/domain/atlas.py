@@ -1,7 +1,8 @@
-"""The Atlas knowledge corpus — the RAG source at M3.
+"""The Atlas knowledge corpus. This is the RAG source used in M3.
 
-Documents carry an effective date because quoting policy changes, and a retrieval
-that cites a superseded rule is a wrong answer with a citation attached.
+Documents carry an effective date because quoting policy changes over time. A
+retrieval that cites a superseded rule produces a wrong answer that still has a
+citation attached.
 """
 
 from datetime import date

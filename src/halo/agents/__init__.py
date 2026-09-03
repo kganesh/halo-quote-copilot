@@ -1,1 +1,1 @@
-"""Agents. Each one is `(principal, task, budget) -> Outcome` and nothing else."""
+"""Agents. Each one has the signature `(principal, task, budget) -> Outcome`."""

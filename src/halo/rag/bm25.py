@@ -1,12 +1,14 @@
-"""BM25 over the Atlas corpus — the lexical half of retrieval.
+"""BM25 over the Atlas corpus. This is the keyword half of retrieval.
 
-Written out rather than imported because it is the part of hybrid search worth
-understanding, and because what it catches is specific: product codes, dollar
-amounts, "PMS", "digitizing", "2XL". A vector search knows those terms are
-*about* pricing and decoration; it does not reliably know which one you typed.
+This is written out rather than imported from a library, for two reasons. It is
+the part of hybrid search that is worth understanding. And what it catches is
+specific: product codes, dollar amounts, "PMS", "digitizing", "2XL". A vector
+search knows those terms relate to pricing and decoration. It is not reliable
+about which exact one you typed.
 
-Standard parameters. `k1` controls how fast term frequency saturates, `b` how
-much a long document is penalised for its length.
+The parameters are the standard values. `k1` controls how quickly repeated terms
+stop adding to the score. `b` controls how much a long document is penalised for
+its length.
 """
 
 from __future__ import annotations
@@ -32,11 +34,11 @@ STOPWORDS = frozenset(_STOPWORD_TEXT.split())
 
 
 def tokenize(text: str) -> list[str]:
-    """Lowercase word-ish tokens, keeping the characters that carry meaning here.
+    """Lowercase tokens, keeping the characters that carry meaning in this corpus.
 
-    `$22.00`, `2xl` and `base.en` survive intact; a tokenizer that split on
-    punctuation would turn the first into `22` and `00` and lose the fact that a
-    price was being asked about at all.
+    `$22.00`, `2xl` and `base.en` stay intact. A tokenizer that split on
+    punctuation would turn `$22.00` into `22` and `00`, which loses the fact that
+    the question was about a price.
     """
     return [
         token.strip(".")
@@ -68,8 +70,8 @@ class Bm25Index:
     def _idf(self, term: str) -> float:
         n = len(self.ids)
         df = self._df.get(term, 0)
-        # The +0.5 smoothing keeps a term appearing in every document at a small
-        # positive weight rather than a negative one.
+        # The +0.5 smoothing keeps a term that appears in every document at a
+        # small positive weight instead of a negative one.
         return math.log(1 + (n - df + 0.5) / (df + 0.5))
 
     def search(self, query: str, limit: int = 10) -> list[tuple[str, float]]:

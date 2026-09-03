@@ -1,7 +1,7 @@
-"""PIM / OMS: what HALO sells, at what price, at what margin floor.
+"""PIM and OMS: what HALO sells, at what price, and at what margin floor.
 
-The system of record for money. Every unit price in a quote has to come from
-`get_price`, and the `tool_call_id` of that call is what the quote cites.
+This is the system of record for money. Every unit price in a quote must come
+from `get_price`. The `tool_call_id` of that call is what the quote cites.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ def search_products(description: str, category: str | None = None, limit: int = 
 def get_price(sku: str, quantity: int) -> dict:
     """Unit price for a SKU at a quantity, from the quantity-break table.
 
-    Returns the tier that applies, so a caller can see which break it landed in
-    rather than only the number that came out.
+    The response includes the tier that applied. A caller can then see which
+    quantity break the order fell into, not only the resulting price.
     """
     tiers = [t for t in price_tiers() if t["sku"] == sku]
     if not tiers:
@@ -89,8 +89,8 @@ def get_price(sku: str, quantity: int) -> dict:
 def get_margin_policy(category: str) -> dict:
     """The floor and target gross margin for a category.
 
-    The floor is what triggers human approval, so it is served rather than
-    remembered.
+    The floor is what triggers human approval. It is served by a tool so that the
+    current value is used, rather than a value the model remembers.
     """
     policy = next((p for p in margin_policies() if p["category"] == category), None)
     if policy is None:

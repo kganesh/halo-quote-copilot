@@ -1,4 +1,4 @@
-"""The governance layer, tested without a transport under it."""
+"""The governance layer, tested with no transport underneath it."""
 
 from decimal import Decimal
 
@@ -72,7 +72,7 @@ async def test_different_arguments_are_a_different_call():
 
 @pytest.mark.asyncio
 async def test_a_failing_tool_is_recorded_not_raised():
-    """An agent has to see the failure to escalate on it."""
+    """The agent must see the failure in order to escalate."""
     gw = a_gateway()
     call = await gw.call("svc.boom", {})
 
@@ -105,8 +105,8 @@ async def test_tool_calls_count_against_the_budget():
 
 @pytest.mark.asyncio
 async def test_a_replay_does_not_spend_budget():
-    """Charging twice for one answer would make the ceiling depend on how often
-    the model repeats itself."""
+    """Charging twice for one answer would make the limit depend on how often the
+    model repeats itself."""
     tracker = BudgetTracker(
         Budget(wall_clock_seconds=30, max_tokens=1000, max_tool_calls=1, max_usd=Decimal("1")),
         now=lambda: 0.0,
@@ -123,8 +123,8 @@ async def test_a_replay_does_not_spend_budget():
 @pytest.mark.asyncio
 async def test_a_tool_answering_with_an_error_field_is_not_a_success():
     """These tools report "no capacity for that" by returning an error field
-    rather than raising. Counting that as ok made the model see a successful
-    call with nothing usable in it, and fill the gap itself."""
+    instead of raising an exception. Counting that as a success made the model
+    see a successful call with nothing usable in it, and invent the value."""
     gw = a_gateway(**{"svc.refuses": lambda: {"error": "no capacity for 500 units"}})
     gw.allowed["svc.refuses"] = ToolSpec("svc.refuses", timeout_seconds=5)
 

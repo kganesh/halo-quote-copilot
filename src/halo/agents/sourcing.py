@@ -1,16 +1,17 @@
-"""M2: draft a quote from tools, and prove every figure came from one.
+"""M2: build a quote from tools, and prove every figure came from one.
 
-The M1 drafter invented its numbers and said so. This one has a catalogue, a
-supplier and a carrier behind an MCP gateway, and the only figures it may use are
-ones a tool returned.
+The M1 drafter invented its numbers and reported that it had done so. This agent
+has a catalogue, a supplier and a carrier behind an MCP gateway. The only figures
+it may use are figures a tool returned.
 
-Two mechanics do the work, and neither is a prompt instruction:
+Two mechanisms do this work. Neither is a prompt instruction:
 
-- The model reports, for every money figure, the `tool_call_id` it came from.
-- `verify` then checks that the cited call exists in the audit **and that the
-  value actually appears in that call's result.** A model that cites a real id
-  for a number the tool never returned is caught here, which is the difference
-  between provenance and the appearance of provenance.
+- For every money figure, the model reports the `tool_call_id` it came from.
+- `verify` then checks two things. First, that the cited call exists in the
+  audit. Second, that the value actually appears in that call's result.
+
+The second check is the important one. A model can cite a real call id for a
+number that call never returned. Checking only the id would accept it.
 """
 
 from __future__ import annotations
@@ -41,13 +42,14 @@ REQUIRED_TOOLS = {
     "supplier.earliest_ship_date",
     "shipping.estimate_freight",
 }
-"""Tools a complete sourcing must have called.
+"""Tools that a complete sourcing must have called.
 
-Enforced by the loop rather than asked for in the prompt. Three live runs went
-three different ways — the model back-computed a ship date from the customer's
-deadline, then skipped `earliest_ship_date` altogether and cited a made-up id —
-and each time the fix would have been another sentence of prompt. A sequence the
-answer depends on belongs in the harness, where it either happened or it did not.
+The loop enforces this. The prompt does not ask for it. Three live runs failed in
+three different ways. In one, the model calculated a ship date backwards from the
+customer's deadline. In another, it skipped `earliest_ship_date` completely and
+cited an id that did not exist. Each time, the obvious fix was another sentence
+in the prompt. A sequence that the answer depends on belongs in the harness,
+where it either happened or it did not.
 """
 
 SYSTEM_PROMPT = """\
@@ -58,13 +60,13 @@ Today's date is {today:%A %d %B %Y}.
 
 Every money figure and every date in your answer must come from a tool result.
 You have no pricing, stock, capacity or freight knowledge of your own, and a
-figure you did not fetch is not usable — if a tool cannot give you something,
-record it in `unresolved` rather than supplying it yourself.
+figure you did not fetch is not usable. If a tool cannot give you something,
+record it in `unresolved` instead of supplying it yourself.
 
 `unresolved` is only for figures no tool could give you. Anything a person has to
-decide before the order is entered — a garment colour, a size breakdown, an
-imprint placement — goes in `open_questions`. A quote with open questions is still
-a quote; a quote with an unsourced figure is not.
+decide before the order is entered goes in `open_questions`. Examples: a garment
+colour, a size breakdown, an imprint placement. A quote with open questions is
+still a quote. A quote with an unsourced figure is not.
 
 Work in this order:
 
@@ -77,13 +79,13 @@ Work in this order:
 6. `estimate_freight` to the destination state.
 
 `promised_ship_date` is the `ship_date` string that `earliest_ship_date` returned,
-copied verbatim. Do not compute it, adjust it, or work backwards from the date the
-customer asked for. If the supplier's date misses the customer's, that is a fact
-for `unresolved` — not a reason to change the date.
+copied exactly. Do not compute it, adjust it, or work backwards from the date the
+customer asked for. If the supplier's date is later than the customer's date,
+record that in `unresolved`. Do not change the date.
 
 For each figure you report, give the `tool_call_id` of the call that produced it.
-Every tool result is labelled with its id. Do not guess an id, and do not reuse
-one from a different figure — both are checked.
+Every tool result is labelled with its id. Do not guess an id. Do not reuse an id
+from a different figure. Both are checked.
 """
 
 TOOLS: list[dict[str, Any]] = [
@@ -190,14 +192,14 @@ TOOL_ROUTES = {
 
 
 class SourcedFigure(BaseModel):
-    """A number and the call it came from. Both halves are checked."""
+    """A number and the call it came from. Both parts are checked."""
 
     value: Decimal
     tool_call_id: str = Field(pattern=r"^tc-\d{4}$")
 
 
 class SourcingDecision(BaseModel):
-    """What the model concluded, with a receipt for every figure."""
+    """What the model decided, with a source for every figure."""
 
     sku: str
     product_name: str
@@ -215,24 +217,24 @@ class SourcingDecision(BaseModel):
     unresolved: list[str] = Field(default_factory=list)
     """Figures no tool could supply. Any entry here means there is no quote."""
     open_questions: list[str] = Field(default_factory=list)
-    """Things a human must settle before the order is entered — a colour choice,
-    a size breakdown, an imprint placement.
+    """Things a person must decide before the order is entered. For example a
+    colour choice, a size breakdown, or an imprint placement.
 
-    Separate from `unresolved` because they are different failures. A quote with
-    a colour still to be chosen is a normal quote; a quote with an unsourced
-    price is not one at all. Folding both into `unresolved` made every realistic
-    request escalate, which would have made `completed` unreachable in practice
-    and the distinction meaningless."""
+    This is separate from `unresolved` because they are different problems. A
+    quote with a colour still to be chosen is a normal quote. A quote with an
+    unsourced price is not a quote at all. Putting both in `unresolved` made
+    every realistic request escalate, which made `completed` unreachable in
+    practice."""
 
 
 def _values_under(result: Any, hints: tuple[str, ...]) -> set[str]:
-    """Scalars sitting under a key whose name matches one of `hints`.
+    """Values stored under a key whose name matches one of `hints`.
 
-    Searching every scalar in the result was the first attempt and it is too
-    loose: `estimate_freight` returns `{"freight_cost": "294.00", "zone": 2}`, so
-    a fabricated freight cost of $2.00 matched the *zone number* and verified
-    clean. Restricting the search to plausibly-named fields closes that, and
-    makes "no field here could carry this figure" its own answer.
+    The first version searched every value in the result. That was too loose.
+    `estimate_freight` returns `{"freight_cost": "294.00", "zone": 2}`. A
+    fabricated freight cost of $2.00 matched the zone number and passed
+    verification. Searching only fields with a matching name fixes this. It also
+    makes "no field here could hold this figure" a distinct result.
     """
     found: set[str] = set()
     if isinstance(result, dict):
@@ -276,7 +278,7 @@ def verify(decision: SourcingDecision, audit: list[ToolCall]) -> list[str]:
     problems: list[str] = []
 
     # Each figure names the field it could legitimately have come from. Without
-    # this, any number in the result would do — see `_values_under`.
+    # this, any number in the result would match. See `_values_under`.
     checks: list[tuple[str, Decimal | date, str, tuple[str, ...]]] = [
         ("unit_price", decision.unit_price.value, decision.unit_price.tool_call_id, ("price",)),
         (
@@ -401,8 +403,9 @@ async def source_quote(
             for block in turn.tool_uses:
                 route = TOOL_ROUTES.get(block.name, block.name)
                 call = await gateway.call(route, dict(block.input))
-                # The id is handed back with the result so the model can cite it.
-                # Nothing else in the loop tells it what a tool_call_id looks like.
+                # The id goes back with the result so the model can cite it.
+                # Nothing else in the loop tells the model what a tool_call_id
+                # looks like.
                 payload = {
                     "tool_call_id": call.id,
                     "result" if call.ok else "error": call.result if call.ok else call.error,
@@ -490,10 +493,10 @@ async def source_quote(
 
 
 def _transcript(messages: list[dict[str, Any]]) -> str:
-    """A plain-text rendering of the loop, for the reporting call.
+    """A plain-text rendering of the loop, used by the reporting call.
 
-    Only tool results and assistant text are kept: the reporting call needs the
-    ids and the figures, not the model's own reasoning about them.
+    This keeps only tool results and assistant text. The reporting call needs the
+    ids and the figures. It does not need the model's reasoning about them.
     """
     lines: list[str] = []
     for message in messages:

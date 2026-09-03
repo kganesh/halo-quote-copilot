@@ -1,14 +1,14 @@
 """M3: answer a policy question from the Atlas corpus, and prove the answer is in it.
 
-The M2 mechanic, moved from numbers to prose. There, a figure had to appear in
-the tool result it cited. Here, a claim has to appear in the chunk it cites —
-and the model is made to hand back the exact span, verbatim, so the check is a
-substring test rather than a judgement call.
+This is the M2 mechanism applied to text instead of numbers. In M2, a figure had
+to appear in the tool result it cited. Here, a claim has to appear in the chunk
+it cites. The model must return the exact text, word for word, so the check is a
+substring test and not a judgement.
 
-That verbatim requirement is the whole design. Asking a model "which chunk did
-this come from" gets a confident id and a paraphrase; asking it to quote the
-sentence, then checking the sentence is really there, is the difference between
-a citation and a decoration.
+The word-for-word requirement is the important part. If you ask a model which
+chunk a claim came from, it returns a confident id and a paraphrase. If you ask
+it to quote the sentence, and then check that the sentence is in the chunk, you
+can tell the two apart.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ guess.
 
 
 class Finding(BaseModel):
-    """One claim and the span of text that supports it."""
+    """One claim and the text that supports it."""
 
     claim: str = Field(min_length=1)
     chunk_id: str = Field(pattern=r"^atl-[a-z0-9-]+#[a-z0-9-]+$")
@@ -59,11 +59,11 @@ class PolicyAnswer(BaseModel):
 
 
 def _normalise(text: str) -> str:
-    """Collapse whitespace so a quote that crossed a line break still matches.
+    """Collapse whitespace, so a quote that crosses a line break still matches.
 
-    Deliberately no other leniency. Lowercasing or stripping punctuation would
-    start letting near-quotes through, and a near-quote is exactly the thing this
-    is meant to catch.
+    Nothing else is normalised, deliberately. Lowercasing or removing punctuation
+    would start accepting quotes that are close but not exact. Those are what
+    this check exists to catch.
     """
     return re.sub(r"\s+", " ", text).strip()
 

@@ -1,7 +1,8 @@
-"""M0's done-criteria: every generated record validates against its schema.
+"""M0's completion criteria: every generated record validates against its schema.
 
-These also pin the invariants the later milestones assume — contiguous price
-tiers, capacity that cannot exceed itself, and books that stay inside a tenant.
+These tests also fix the invariants that later milestones assume: price tiers
+with no gaps, booked capacity that never exceeds total capacity, and seller
+account lists that stay inside one tenant.
 """
 
 from decimal import Decimal
@@ -76,7 +77,7 @@ def test_a_seller_book_stays_inside_its_tenant(corpus):
 
 
 def test_some_seller_pairs_have_no_overlap(corpus):
-    """M5's deny test needs a request that is unambiguously out of scope."""
+    """M5's deny test needs a request that is clearly out of scope."""
     sellers = [s for s in load(corpus, "sellers") if s["role"] == "seller"]
     books = [set(s["account_ids"]) for s in sellers]
     assert any(not a & b for a in books for b in books if a is not b)
@@ -88,7 +89,7 @@ def test_capacity_is_never_overbooked(corpus):
 
 
 def test_capacity_includes_both_full_and_open_days(corpus):
-    """A calendar with no full days makes date confirmation a formality."""
+    """If no day is ever full, confirming a date is a formality."""
     days = load(corpus, "capacity")
     assert any(d["booked_units"] == d["capacity_units"] for d in days)
     assert any(d["booked_units"] < d["capacity_units"] for d in days)

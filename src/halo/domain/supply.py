@@ -30,8 +30,9 @@ class InventoryRow(BaseModel):
 class CapacityDay(BaseModel):
     """A decorator's bookable units for one method on one day.
 
-    `booked` is deliberately separate from `capacity` so the supplier MCP server
-    answers "can you take 500 more by the 15th", not just "how big are you".
+    `booked` is stored separately from `capacity` on purpose. This lets the
+    supplier MCP server answer "can you take 500 more by the 15th", rather than
+    only "how much capacity do you have".
     """
 
     supplier_id: str

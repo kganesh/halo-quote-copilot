@@ -39,7 +39,8 @@ class Product(BaseModel):
 
 
 class PriceTier(BaseModel):
-    """Quantity-break pricing. Tiers for one SKU are contiguous and non-overlapping."""
+    """Quantity-break pricing. Tiers for one SKU do not overlap and leave no
+    gaps."""
 
     sku: str
     min_qty: int = Field(ge=1)
@@ -48,7 +49,7 @@ class PriceTier(BaseModel):
 
 
 class MarginPolicy(BaseModel):
-    """The floor below which a quote needs a human — the M6 approval trigger."""
+    """The margin below which a quote needs human approval. Used in M6."""
 
     category: ProductCategory
     floor_pct: Decimal = Field(gt=0, lt=100, decimal_places=1)

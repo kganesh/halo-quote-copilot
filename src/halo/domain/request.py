@@ -1,9 +1,9 @@
-"""What the seller asked for, and what an ungrounded answer to it looks like.
+"""What the seller asked for, and what an ungrounded answer looks like.
 
 `UngroundedDraft` is a separate type from `Quote` on purpose. A `Quote` cannot be
-constructed without citations; a draft has none and never will. Keeping them apart
-means M1's output cannot be mistaken for a real quote by anything downstream — the
-type system carries the distinction, not a comment.
+created without citations. A draft has none, and never will. Keeping the two
+types apart means nothing downstream can mistake M1's output for a real quote.
+The type system enforces this, not a comment.
 """
 
 from datetime import date
@@ -15,11 +15,11 @@ from halo.domain.catalog import DecorationMethod
 
 
 class QuoteRequest(BaseModel):
-    """The seller's sentence, read into fields.
+    """The seller's sentence, parsed into fields.
 
-    Everything except the product description is optional because sellers leave
-    things out, and a missing delivery date is a question to ask rather than a
-    value to invent.
+    Every field except the product description is optional. Sellers leave things
+    out. A missing delivery date is a question to ask the customer, not a value
+    to invent.
     """
 
     product_description: str = Field(min_length=1)
@@ -34,7 +34,7 @@ class QuoteRequest(BaseModel):
 
 
 class UngroundedLine(BaseModel):
-    """A quote line with no source. The SKU is invented — no catalogue was read."""
+    """A quote line with no source. The SKU is invented; no catalogue was read."""
 
     sku: str
     description: str
@@ -47,11 +47,11 @@ class UngroundedLine(BaseModel):
 
 
 class UngroundedDraft(BaseModel):
-    """M1's whole output: a plausible quote with nothing behind it.
+    """M1's complete output: a plausible quote with no sources behind it.
 
-    `assumptions` is required and must be non-empty. It is what makes the
-    fabrication legible — the model names the things it had no way to know, and
-    every one of them is a tool call or a retrieval that M2 and M3 will add.
+    `assumptions` is required and must not be empty. It makes the invented parts
+    visible. The model names each thing it had no way to know. Each of those
+    becomes a tool call added in M2 or a retrieval added in M3.
     """
 
     request: QuoteRequest

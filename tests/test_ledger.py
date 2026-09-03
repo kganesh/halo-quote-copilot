@@ -1,4 +1,4 @@
-"""The spend record, which has to survive the failures it is most needed for."""
+"""The spend record. It must survive the failures it is most needed for."""
 
 from decimal import Decimal
 
@@ -38,7 +38,8 @@ def test_spend_is_broken_down_by_command(tmp_path):
 
 
 def test_a_torn_line_does_not_lose_the_rest(tmp_path):
-    """A crashed run can leave a half-written line; the history still matters."""
+    """A run that crashes can leave a partly written line. The rest of the
+    history still matters."""
     path = tmp_path / "spend.jsonl"
     record("quote", "sonnet", a_usage("0.05"), path=path)
     with path.open("a") as handle:
@@ -48,7 +49,8 @@ def test_a_torn_line_does_not_lose_the_rest(tmp_path):
 
 
 def test_a_ledger_failure_never_fails_the_run(tmp_path):
-    """Losing a spend row is a nuisance; losing the quote is not acceptable."""
+    """Losing a spend row is a minor problem. Losing the quote is not
+    acceptable."""
     unwritable = tmp_path / "nope" / "spend.jsonl"
     unwritable.parent.mkdir()
     unwritable.parent.chmod(0o500)

@@ -1,9 +1,9 @@
 """Regenerate the whole synthetic HALO corpus from one fixed seed.
 
-Determinism is the point: two runs on two machines produce identical files, so a
-retrieval or pricing regression at M3 is a real regression and not a reshuffled
-catalogue. Everything here is invented — no HALO systems or customer records are
-involved.
+Determinism is the point. Two runs on two machines produce identical files. A
+retrieval or pricing regression at M3 is therefore a real regression, not a
+reshuffled catalogue. Everything here is invented. No HALO systems or customer
+records are involved.
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ from halo.seed.atlas_sources import (
 
 OUT_DIR = Path(__file__).resolve().parents[3] / "data" / "seed"
 
-# The catalogue is anchored to a fixed "today" so capacity calendars and effective
-# dates do not drift with the wall clock and quietly change eval answers.
+# The catalogue is anchored to a fixed "today". Otherwise capacity calendars and
+# effective dates would move with the real clock and change eval answers without
+# any code change.
 ANCHOR_DAY = date(2026, 9, 1)
 CAPACITY_HORIZON_DAYS = 90
 
@@ -83,8 +84,9 @@ CATEGORY_SIZES: dict[ProductCategory, list[str]] = {
     ProductCategory.WRITING: ["OS"],
 }
 
-# Floors and targets must agree with atl-margin-floors, or retrieval will cite a
-# document that contradicts the tool. Keeping them in one place is the fix.
+# These floors and targets must match atl-margin-floors. If they do not,
+# retrieval will cite a document that contradicts the tool. Defining them in one
+# place prevents that.
 MARGIN_FLOORS: dict[ProductCategory, tuple[str, str]] = {
     ProductCategory.OUTERWEAR: ("32.0", "38.0"),
     ProductCategory.KNITS: ("30.0", "36.0"),
@@ -227,10 +229,10 @@ def build_accounts(rng: random.Random) -> list[Account]:
 
 
 def build_sellers(rng: random.Random, accounts: list[Account]) -> list[Seller]:
-    """Twelve sellers, four per tenant, one of whom is a manager.
+    """Twelve sellers, four per tenant. One per tenant is a manager.
 
-    Books deliberately do not overlap: the M5 deny test needs a request that is
-    unambiguously outside a seller's scope.
+    Seller account lists deliberately do not overlap. The M5 deny test needs a
+    request that is clearly outside a seller's scope.
     """
     first = [
         "Dana",
@@ -306,7 +308,7 @@ def build_catalog(rng: random.Random) -> tuple[list[Product], list[PriceTier]]:
                     else 48,
                 )
             )
-            # Four quantity breaks, each a shallower markup than the last.
+            # Four quantity breaks. Each has a lower markup than the one before.
             for (lo, hi), markup in zip(
                 [(1, 99), (100, 249), (250, 499), (500, None)],
                 [Decimal("2.05"), Decimal("1.85"), Decimal("1.70"), Decimal("1.58")],
@@ -347,10 +349,10 @@ def build_suppliers() -> list[Supplier]:
 def build_inventory(
     rng: random.Random, products: list[Product], suppliers: list[Supplier]
 ) -> list[InventoryRow]:
-    """Each supplier stocks a slice of the catalogue, with real stockouts in it.
+    """Each supplier stocks part of the catalogue, including some stockouts.
 
-    Roughly one row in twelve is zero on hand, so "is it available" is a question
-    with two possible answers rather than a formality.
+    About one row in twelve has zero on hand. That makes "is it available" a
+    question with two possible answers instead of a formality.
     """
     rows: list[InventoryRow] = []
     for supplier in suppliers:
@@ -372,7 +374,7 @@ def build_inventory(
 
 
 def build_capacity(rng: random.Random, suppliers: list[Supplier]) -> list[CapacityDay]:
-    """Ninety days of bookable capacity, weekdays only, with genuinely full days."""
+    """Ninety days of bookable capacity, weekdays only, including full days."""
     days: list[CapacityDay] = []
     for supplier in suppliers:
         for offset in range(CAPACITY_HORIZON_DAYS):
@@ -381,8 +383,9 @@ def build_capacity(rng: random.Random, suppliers: list[Supplier]) -> list[Capaci
                 continue
             for method in supplier.decoration_methods:
                 capacity = rng.randrange(600, 2400, 100)
-                # A fifth of days are effectively booked out — the case that makes
-                # "confirm the date" different from "read the lead time".
+                # About a fifth of days are fully booked. Those are the days
+                # that make "confirm the date" different from "read the lead
+                # time".
                 booked = capacity if rng.random() < 0.2 else rng.randrange(0, capacity)
                 days.append(
                     CapacityDay(
@@ -488,8 +491,9 @@ def generate(out_dir: Path = OUT_DIR) -> dict[str, int]:
     for name, records in tables.items():
         _write(name, records)
 
-    # Atlas also lands as markdown: the M3 ingest reads files, not a JSON blob,
-    # because chunking a real document is part of what M3 is for.
+    # Atlas is also written as markdown files. The M3 ingest reads files rather
+    # than a single JSON document, because chunking a real document is part of
+    # what M3 is for.
     for doc in atlas:
         (out_dir / "atlas" / f"{doc.id}.md").write_text(doc.body + "\n")
 

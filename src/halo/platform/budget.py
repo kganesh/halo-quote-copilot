@@ -1,8 +1,8 @@
-"""Design rule 05: budgets are enforced by the harness, not requested in a prompt.
+"""Design rule 05: the harness enforces budgets. The prompt does not request them.
 
-Asking a model to be brief is not a ceiling. This is — the loop checks before
-every step and stops with a reason, so an over-budget run produces a clean
-escalation rather than a truncated answer.
+Asking a model to be brief is not a limit. This module is a limit. The loop
+checks the budget before every step and stops with a reason. A run that goes over
+budget produces a clean escalation instead of a truncated answer.
 """
 
 import time
@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class Budget(BaseModel):
-    """Ceilings for one agent run. All four are hard stops."""
+    """Limits for one agent run. All four are hard stops."""
 
     wall_clock_seconds: float = Field(gt=0)
     max_tokens: int = Field(gt=0)
@@ -34,7 +34,7 @@ class Usage(BaseModel):
 
 
 class BudgetExceeded(Exception):
-    """Which ceiling was hit, so the escalation reason can say so."""
+    """Records which limit was reached, so the escalation reason can name it."""
 
     def __init__(self, dimension: str, limit: object, spent: object) -> None:
         super().__init__(f"budget exceeded on {dimension}: spent {spent}, limit {limit}")
@@ -55,7 +55,7 @@ class BudgetTracker:
         return self._now() - self._started
 
     def check(self) -> None:
-        """Raise if any ceiling is already crossed. Call before each step."""
+        """Raise if any limit has been passed. Call this before each step."""
         if self.elapsed_seconds > self._budget.wall_clock_seconds:
             raise BudgetExceeded(
                 "wall_clock_seconds",

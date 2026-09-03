@@ -1,4 +1,4 @@
-"""The three rules that hold the rest of the system up, tested without a model."""
+"""The three rules the rest of the system depends on, tested without a model."""
 
 from datetime import date
 from decimal import Decimal
@@ -185,7 +185,8 @@ class TestQuoteProvenance:
             Citation(kind=CitationKind.CHUNK, ref="atl-x", supporting_text="   ")
 
     def test_a_document_id_filed_as_a_tool_call_is_rejected(self):
-        """Reads fine in a quote; resolves to nothing in the audit trail."""
+        """This looks correct in a quote and resolves to nothing in the audit
+        trail."""
         with pytest.raises(ValidationError, match="should start with"):
             self._quote(
                 shipping_citations=[

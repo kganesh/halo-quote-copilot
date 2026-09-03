@@ -39,7 +39,7 @@ def test_every_id_keeps_the_prefix_a_chunk_citation_requires():
 
 
 def test_the_h1_is_not_a_section():
-    """It is the document title, already carried on every chunk."""
+    """The H1 is the document title. Every chunk already carries it."""
     chunks = chunk_document("atl-x", "Screen Print Standards", DOC)
     assert all(c.heading != "Screen Print Standards" for c in chunks)
     assert all(c.doc_title == "Screen Print Standards" for c in chunks)
@@ -52,15 +52,15 @@ def test_an_undersized_section_is_merged_rather_than_left_as_a_fragment():
 
 
 def test_a_merged_section_keeps_its_own_heading_inline():
-    """Otherwise the fact is orphaned from the label that explains it."""
+    """Otherwise the fact loses the label that explains it."""
     chunks = chunk_document("atl-x", "Doc", DOC)
     merged = next(c for c in chunks if "Short." in c.text)
     assert "**Note.**" in merged.text
 
 
 def test_a_short_preamble_does_not_steal_the_next_heading():
-    """A two-line intro should not take the id of the section beneath it —
-    a citation to `#overview` for a colour limit points at the wrong label."""
+    """A two-line introduction should not take the id of the section below it.
+    A citation to `#overview` for a colour limit points at the wrong label."""
     chunks = chunk_document("atl-screen-print-standards", "Screen Print Standards", DOC)
     ids = [c.id for c in chunks]
 
@@ -73,8 +73,8 @@ def test_a_short_preamble_does_not_steal_the_next_heading():
 
 
 def test_embed_text_carries_the_heading():
-    """A section headed "Lead time" is about lead time whether or not the words
-    appear in the body."""
+    """A section titled "Lead time" is about lead time, whether or not those
+    words appear in the body."""
     chunk = Chunk(
         id="atl-x#lead-time",
         doc_id="atl-x",

@@ -1,13 +1,13 @@
-"""Split Atlas documents into citable pieces.
+"""Split Atlas documents into pieces that can be cited.
 
-Chunked on markdown headings rather than a fixed token window. These documents
-are already written in sections that each make one point — "Colour limits",
-"Charges", "Lead time" — so the headings are a better boundary than any window
-size, and the heading becomes the human-readable half of the citation.
+We split on markdown headings, not on a fixed token count. These documents are
+already written in sections that each make one point: "Colour limits",
+"Charges", "Lead time". The headings are better boundaries than any window size.
+The heading also becomes the readable part of the citation.
 
-A chunk id is `{doc_id}#{slug}`, which keeps the `atl-` prefix the `Quote`
-validator requires of a `CitationKind.CHUNK` reference. That is not a
-coincidence: an id that cannot be cited is not worth minting.
+A chunk id has the format `{doc_id}#{slug}`. This keeps the `atl-` prefix that
+the `Quote` validator requires for a `CitationKind.CHUNK` reference. That is
+deliberate. An id that cannot be used in a citation is not useful here.
 """
 
 from __future__ import annotations
@@ -16,21 +16,21 @@ import re
 from dataclasses import dataclass
 
 MIN_CHUNK_WORDS = 12
-"""Below this a section is merged into the one after it.
+"""A section shorter than this is merged into the section after it.
 
-Short sections here are real facts — "10 business days after artwork approval"
-is exactly what someone asks for. But a two-word chunk retrieves badly (BM25
-length normalisation flatters very short documents) and reads as a fragment
-when cited. Merging keeps the fact and gives it enough around it to be worth
-pointing at.
+Short sections here contain real facts. "10 business days after artwork
+approval" is exactly what someone asks about. But a two-word chunk retrieves
+badly, because BM25 length normalisation gives very short documents an advantage.
+It also reads as a fragment when cited. Merging keeps the fact and gives it
+enough surrounding text to be useful as a citation.
 """
 
 MAX_CHUNK_WORDS = 220
-"""Above this a section is split on paragraph boundaries.
+"""A section longer than this is split at paragraph boundaries.
 
-Titan v2 would happily embed far more, but a citation is only useful if a reader
-can see the claim in it. A chunk the size of a page is a document reference
-wearing a citation's clothes.
+Titan v2 can embed much more than this. The limit is about citations, not
+embedding. A citation is only useful if a reader can find the claim inside it. A
+chunk the size of a full page is really a document reference, not a citation.
 """
 
 
@@ -45,11 +45,12 @@ class Chunk:
 
     @property
     def embed_text(self) -> str:
-        """What gets embedded: the heading carries context the body assumes.
+        """The text that gets embedded. The heading carries context the body
+        assumes.
 
-        A section headed "Lead time" whose body says "Standard production is 7
-        business days" is about lead time whether or not the words appear in the
-        paragraph. Embedding the body alone loses that.
+        A section titled "Lead time" whose body says "Standard production is 7
+        business days" is about lead time, whether or not those words appear in
+        the paragraph. Embedding the body alone would lose that.
         """
         return f"{self.doc_title} — {self.heading}\n\n{self.text}"
 
@@ -60,7 +61,8 @@ def _slug(heading: str) -> str:
 
 
 def _split_long(text: str) -> list[str]:
-    """Break an over-long section on blank lines, never mid-sentence."""
+    """Split a section that is too long at blank lines, never inside a
+    sentence."""
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     pieces: list[str] = []
     current: list[str] = []
@@ -88,7 +90,7 @@ def chunk_document(doc_id: str, title: str, body: str) -> list[Chunk]:
         if match := re.match(r"^(#{1,3})\s+(.*)$", line):
             level, text = len(match.group(1)), match.group(2).strip()
             if level == 1:
-                # The H1 is the document title, already carried on every chunk.
+                # The H1 is the document title. Every chunk already carries it.
                 continue
             if buffer:
                 sections.append((heading, buffer))
@@ -126,21 +128,21 @@ def chunk_document(doc_id: str, title: str, body: str) -> list[Chunk]:
 
 
 def _merge_short(drafts: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Fold undersized sections into the next one, keeping both headings.
+    """Merge sections that are too short into a neighbouring section.
 
-    The merged chunk keeps the first heading as its own — that is what the
-    citation shows — and carries the second inline so the fact under it is not
-    orphaned from its label.
+    The merged chunk keeps the heading of whichever section is substantial. That
+    heading is what the citation shows. The short section's heading is written
+    inline in the text, so the fact under it keeps its label.
     """
     merged: list[tuple[str, str]] = []
     pending: tuple[str, str] | None = None
 
     for heading, text in drafts:
         if pending is not None:
-            # The substantial half keeps its heading — that is what the citation
-            # shows, and a two-line preamble should not take the id of the
-            # section it sits above. The short text is folded in with its own
-            # label so the fact under it is not orphaned.
+            # The substantial section keeps its heading. That heading is what
+            # the citation shows. A two-line preamble should not take the id of
+            # the section below it. The short text is merged in with its own
+            # label, so the fact keeps its context.
             text = f"**{pending[0]}.** {pending[1]}\n\n{text}"
             pending = None
         if len(text.split()) < MIN_CHUNK_WORDS:

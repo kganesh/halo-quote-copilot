@@ -1,9 +1,9 @@
-"""Design rule 03: identity is a token that travels.
+"""Design rule 03: identity travels with the request.
 
 A Cognito JWT is exchanged once, at admission, for a `Principal`. That principal
-rides into the agent session and onto every MCP call, where the tool servers
-enforce it themselves. The agent is never the thing doing the filtering — at M5 a
-cross-tenant request comes back as a tool-level denial the agent has to report.
+is passed into the agent session and into every MCP call. The tool servers
+enforce it. The agent never filters results itself. At M5, a cross-tenant request
+returns a denial from the tool, and the agent has to report that denial.
 """
 
 from enum import StrEnum
@@ -18,7 +18,7 @@ class Role(StrEnum):
 
 
 class Principal(BaseModel):
-    """Who this run is acting for. Immutable once minted."""
+    """Who this run is acting for. Cannot be changed after it is created."""
 
     model_config = {"frozen": True}
 
@@ -28,7 +28,8 @@ class Principal(BaseModel):
     account_ids: tuple[str, ...] = Field(min_length=1)
 
     def may_read_account(self, account_id: str) -> bool:
-        """Sales managers see their whole tenant; sellers see their own book."""
+        """A sales manager sees the whole tenant. A seller sees only their own
+        accounts."""
         if self.role is Role.SALES_MANAGER:
             return True
         return account_id in self.account_ids
@@ -37,8 +38,8 @@ class Principal(BaseModel):
 class ScopeDenied(Exception):
     """Raised by a tool when the principal is outside its scope.
 
-    Carries no data about the out-of-scope record on purpose: an error message
-    that names what it refused to show is its own small leak.
+    This carries no data about the record it refused to show. An error message
+    that describes what it withheld leaks some of that information.
     """
 
     def __init__(self, principal: Principal, account_id: str) -> None:

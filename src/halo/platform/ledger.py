@@ -1,12 +1,13 @@
 """A running record of what this project has spent on model calls.
 
-Estimates, not an invoice — the rates in `bedrock.PRICE_PER_MTOK` are
-first-party and Bedrock prices separately. What it is good for is the question
-that actually comes up during a build: "how much has today cost me, and which
-command is eating it".
+These are estimates, not an invoice. The rates come from
+`bedrock.PRICE_PER_MTOK`, read from the Bedrock rate card.
 
-One JSON object per line, appended and never rewritten, so a crashed run still
-leaves its row behind.
+The ledger answers the question that comes up during a build: how much has today
+cost, and which command is spending it.
+
+The file holds one JSON object per line. Rows are appended and never rewritten,
+so a run that crashes still leaves its row on disk.
 """
 
 from __future__ import annotations
@@ -26,7 +27,11 @@ LEDGER_PATH = Path(
 
 
 def record(command: str, model: str, usage: Usage, *, path: Path | None = None) -> None:
-    """Append one run. Never raises — a ledger failure must not fail the run."""
+    """Append one run.
+
+    This never raises an exception. Losing a spend record is a small problem.
+    Failing the run because the record could not be written is a larger one.
+    """
     entry = {
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
         "command": command,
@@ -63,7 +68,7 @@ def read(path: Path | None = None) -> list[dict]:
         try:
             entries.append(json.loads(line))
         except ValueError:
-            continue  # a torn final line is not worth losing the rest over
+            continue  # A partly written final line should not discard the rest.
     return entries
 
 

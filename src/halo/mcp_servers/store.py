@@ -1,8 +1,8 @@
-"""Loads the synthetic corpus once, indexed for lookup.
+"""Loads the synthetic corpus once and indexes it for lookup.
 
-The servers stand in for systems of record, so they read the seed data rather
-than compute anything clever. If the corpus is missing the error says how to make
-it, because that is the first thing anyone hits on a fresh clone.
+These servers stand in for systems of record, so they read the seed data instead
+of computing anything. If the corpus is missing, the error message says how to
+create it. That is the first problem anyone hits on a fresh clone.
 """
 
 from __future__ import annotations
@@ -54,5 +54,6 @@ def capacity(seed_dir: str | None = None) -> tuple[dict, ...]:
 
 
 def money(value: object) -> Decimal:
-    """Seed JSON stores money as strings so it survives the round trip intact."""
+    """Seed JSON stores money as strings, so the value survives the round trip
+    without precision loss."""
     return Decimal(str(value))

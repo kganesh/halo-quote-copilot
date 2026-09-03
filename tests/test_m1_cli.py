@@ -1,4 +1,4 @@
-"""The CLI is the M1 demo, so its output is part of the deliverable."""
+"""The CLI is the M1 demo, so its output is part of what M1 delivers."""
 
 from decimal import Decimal
 
@@ -37,13 +37,15 @@ def test_the_render_states_the_outcome_and_the_spend():
 
 
 def test_the_total_shown_is_the_computed_one_not_a_model_claim():
-    """Money is arithmetic over the parts, never a number the model reported."""
+    """The total is calculated from the parts. It is never a number the model
+    reported."""
     out = render(an_outcome())
     assert f"{a_draft().total:,.2f}" in out
 
 
 def test_money_always_shows_cents():
-    """A model may return 19.5, which validates and then prints ragged."""
+    """A model may return 19.5. That validates, and then prints inconsistently
+    next to other amounts."""
     from decimal import Decimal
 
     from halo.cli import money
@@ -54,8 +56,8 @@ def test_money_always_shows_cents():
 
 
 class TestSetupErrorsAreExplained:
-    """Every one of these is fixed once, by an operator, and a traceback helps
-    with none of them."""
+    """An operator fixes each of these once. A traceback does not help with any
+    of them."""
 
     def _explain(self, error):
         from halo.cli import explain
@@ -86,7 +88,7 @@ class TestSetupErrorsAreExplained:
 
 
 class TestEndToEnd:
-    """The CLI path, driven against a fake model — no credentials, no spend."""
+    """The CLI path, running against a fake model. No credentials, no spend."""
 
     def _factory(self, **_kwargs):
         from fakes import FakeModelClient
