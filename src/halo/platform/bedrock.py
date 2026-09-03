@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
@@ -95,6 +95,32 @@ class ModelResult[T: BaseModel]:
     stop_reason: str | None
 
 
+@dataclass(frozen=True)
+class ModelTurn:
+    """One assistant turn in a tool-use loop.
+
+    `content` is kept as the raw block list because it has to go back into the
+    next request unchanged — rebuilding it from extracted text is how tool_use
+    ids get lost.
+    """
+
+    content: list[Any]
+    stop_reason: str | None
+    input_tokens: int
+    output_tokens: int
+    usd: Decimal
+
+    @property
+    def tool_uses(self) -> list[Any]:
+        return [block for block in self.content if getattr(block, "type", None) == "tool_use"]
+
+    @property
+    def text(self) -> str:
+        return "\n".join(
+            block.text for block in self.content if getattr(block, "type", None) == "text"
+        )
+
+
 class ModelClient(Protocol):
     """The seam every agent depends on. Implemented for real by `BedrockClient`
     and by a fake in the tests."""
@@ -107,6 +133,15 @@ class ModelClient(Protocol):
         output_format: type[T],
         max_tokens: int = ...,
     ) -> ModelResult[T]: ...
+
+    def converse(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int = ...,
+    ) -> ModelTurn: ...
 
 
 class BedrockClient:
@@ -172,4 +207,43 @@ class BedrockClient:
             usd=usd,
             model=self.model,
             stop_reason=response.stop_reason,
+        )
+
+    def converse(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int = 8_000,
+    ) -> ModelTurn:
+        """One turn of a tool-use loop. The caller owns the loop.
+
+        Deliberately not a `while stop_reason == "tool_use"` helper: the loop is
+        where budgets are checked and tool results are audited, and burying it
+        here would put both outside the agent's control.
+        """
+        if self._tracker is not None:
+            self._tracker.check()
+
+        response = self._client.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+            tools=tools,
+            thinking={"type": "adaptive"},
+        )
+
+        usage = response.usage
+        usd = estimate_usd(self.model, usage.input_tokens, usage.output_tokens)
+        if self._tracker is not None:
+            self._tracker.record_model_call(usage.input_tokens, usage.output_tokens, usd)
+
+        return ModelTurn(
+            content=list(response.content),
+            stop_reason=response.stop_reason,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            usd=usd,
         )

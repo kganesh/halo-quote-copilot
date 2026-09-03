@@ -72,7 +72,16 @@ tiny call, stopping at the first problem and naming the step that fixes it.
 
 
 ```bash
+# M1 — ungrounded draft, always escalates
 halo quote "Customer wants 500 hoodies, 3-colour front print, Chicago by Oct 15, budget \$12k."
+
+# M2 — sourced from the MCP tool plane, every figure traced to a tool_call_id
+halo source '{"product_description":"fleece hoodie","quantity":500,
+              "decoration_method":"screen_print","imprint_colors":3,
+              "ship_to_state":"IL","needed_by":"2026-11-30"}'
+
+# what this has cost so far
+halo spend
 ```
 
 Needs AWS credentials in the environment and `anthropic.claude-sonnet-5` enabled
@@ -102,8 +111,8 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
 |---|---|---|
 | M0 | Scaffolding and a synthetic HALO | done |
 | M1 | First Bedrock call — and a deliberately ungrounded quote | done |
-| M2 | The MCP tool plane | next |
-| M3 | Atlas RAG with real citations | |
+| M2 | The MCP tool plane | done |
+| M3 | Atlas RAG with real citations | next |
 | M4 | Guardrails and the untrusted boundary | |
 | M5 | One principal, end to end | |
 | M6 | Supervisor, bounded specialists, human approval | |
