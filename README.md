@@ -23,6 +23,91 @@ The full business domain — tenants, catalog, suppliers, margin policy, the
 Atlas corpus, and exactly which of it is wired up versus still sitting unread
 in the seed data — is in [docs/domain.md](docs/domain.md).
 
+## Architecture
+
+Three commands, three agents, one rule. Every agent must say where a value came
+from, and the code checks the source really contains it before the run can
+complete.
+
+```mermaid
+flowchart TB
+    subgraph CLI["halo — command line"]
+        Q["quote"]
+        S["source"]
+        A["ask"]
+    end
+
+    subgraph AG["agents/ — each returns an Outcome, never a string"]
+        D["drafter (M1)<br/>no tools, no corpus"]
+        SO["sourcing (M2)<br/>tool-use loop"]
+        AD["advisor (M3)<br/>retrieve then answer"]
+    end
+
+    subgraph PF["platform/ — shared by every agent"]
+        GW["Gateway<br/>allow-list · timeout<br/>dedup · audit"]
+        BT["BudgetTracker<br/>time · tokens · calls · USD"]
+        LD["ledger<br/>spend per run"]
+    end
+
+    subgraph EV["evidence sources"]
+        M1S["pim_oms<br/>catalog · price · margin"]
+        M2S["supplier<br/>stock · capacity · charges"]
+        M3S["shipping<br/>zones · transit"]
+        IX["Atlas index<br/>25 docs → 80 chunks"]
+    end
+
+    BR["Amazon Bedrock<br/>Claude Sonnet 4.6 · Titan v2"]
+    VF{"verify()<br/>does the source<br/>contain the value?"}
+    OK["COMPLETED<br/>Quote or answer, with citations"]
+    ESC["ESCALATED<br/>names the exact problem"]
+
+    Q --> D
+    S --> SO
+    A --> AD
+
+    D -->|"one call, no evidence"| BR
+    SO -->|"tool_use loop"| BR
+    AD -->|"question + 6 excerpts"| BR
+
+    SO -->|"routed call"| GW
+    GW -->|"MCP over stdio"| M1S
+    GW -->|"MCP over stdio"| M2S
+    GW -->|"MCP over stdio"| M3S
+    GW -->|"tc-0001 …<br/>one row per call"| VF
+
+    AD -->|"hybrid search<br/>BM25 + cosine, fused by RRF"| IX
+    IX -->|"chunk ids + text"| VF
+
+    D -->|"no citation field exists"| ESC
+    SO -->|"figure + tool_call_id"| VF
+    AD -->|"claim + chunk_id + exact quote"| VF
+
+    VF -->|"every source checks out"| OK
+    VF -->|"missing or mismatched"| ESC
+
+    BT -.->|"checked before every step"| SO
+    BT -.->|"checked before every step"| AD
+    BR -.->|"tokens and cost"| LD
+
+    classDef done fill:#E1F1EA,stroke:#1A6F53,color:#0F1728
+    classDef stop fill:#F8E6E6,stroke:#A82A2A,color:#0F1728
+    classDef check fill:#F7E4EE,stroke:#A81C63,color:#0F1728
+    class OK done
+    class ESC stop
+    class VF,GW check
+```
+
+**Reading it.** The three paths differ only in where their evidence comes from.
+M1 has none, so it cannot reach `COMPLETED` — `UngroundedDraft` has no field
+that could hold a citation. M2 gets evidence from tools and cites a
+`tool_call_id`. M3 gets it from retrieved chunks and cites a `chunk_id` plus the
+exact sentence.
+
+`verify()` is the same idea in both cases. It is not enough that the cited
+source exists. The value has to appear in it. A model will cite a real tool call
+for a number that call never returned, and it will name a real chunk for a
+sentence that is not in it. Checking only the id would accept both.
+
 ## Stack
 
 | Concern | Choice |
