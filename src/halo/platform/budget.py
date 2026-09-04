@@ -25,12 +25,35 @@ class Usage(BaseModel):
 
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     tool_calls: int = 0
     usd: Decimal = Decimal("0.00")
 
     @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
+        """Every token the run was billed for.
+
+        Cache tokens are counted here because the API reports them separately
+        from `input_tokens`, not inside it. Leaving them out would let a cached
+        run pass a `max_tokens` limit it had actually exceeded.
+        """
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+        )
+
+    @property
+    def cache_hit_rate(self) -> float:
+        """Share of input tokens served from cache. Zero when nothing is cached.
+
+        The number to watch when turning caching on: if it stays at zero across
+        repeated runs, something is invalidating the prefix.
+        """
+        billed_input = self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
+        return self.cache_read_tokens / billed_input if billed_input else 0.0
 
 
 class BudgetExceeded(Exception):
@@ -71,9 +94,19 @@ class BudgetTracker:
         if self.usage.usd > self._budget.max_usd:
             raise BudgetExceeded("max_usd", self._budget.max_usd, self.usage.usd)
 
-    def record_model_call(self, input_tokens: int, output_tokens: int, usd: Decimal) -> None:
+    def record_model_call(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        usd: Decimal,
+        *,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+    ) -> None:
         self.usage.input_tokens += input_tokens
         self.usage.output_tokens += output_tokens
+        self.usage.cache_read_tokens += cache_read_tokens
+        self.usage.cache_write_tokens += cache_write_tokens
         self.usage.usd += usd
 
     def record_tool_call(self) -> None:

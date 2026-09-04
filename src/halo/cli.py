@@ -335,20 +335,36 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
             print(f"No runs recorded yet ({ledger.LEDGER_PATH}).")
             return 0
         overall = ledger.totals(entries)
-        width = max(len(c) for c in ledger.by_command(entries))
-        print(
-            f"{'command'.ljust(width)}  {'runs':>5} {'in':>10} {'out':>9} {'tools':>6} {'usd':>9}"
-        )
-        for command, total in ledger.by_command(entries).items():
-            print(
-                f"{command.ljust(width)}  {total.runs:>5} {total.input_tokens:>10,} "
-                f"{total.output_tokens:>9,} {total.tool_calls:>6} {total.usd:>9.4f}"
+        grouped = ledger.by_command(entries)
+        width = max(len(c) for c in grouped)
+
+        # The cache columns appear only once something has actually been cached.
+        # Two columns of zeroes would be noise on every run until M6.
+        cached = overall.cache_read_tokens or overall.cache_write_tokens
+
+        def row(name: str, total: ledger.Total) -> str:
+            line = (
+                f"{name.ljust(width)}  {total.runs:>5} {total.input_tokens:>10,} "
+                f"{total.output_tokens:>9,}"
             )
-        print(
-            f"{'TOTAL'.ljust(width)}  {overall.runs:>5} {overall.input_tokens:>10,} "
-            f"{overall.output_tokens:>9,} {overall.tool_calls:>6} {overall.usd:>9.4f}"
-        )
-        print("\nEstimated from first-party rates; Bedrock prices separately.")
+            if cached:
+                line += f" {total.cache_read_tokens:>10,} {total.cache_write_tokens:>10,}"
+            return line + f" {total.tool_calls:>6} {total.usd:>9.4f}"
+
+        header = f"{'command'.ljust(width)}  {'runs':>5} {'in':>10} {'out':>9}"
+        if cached:
+            header += f" {'cache rd':>10} {'cache wr':>10}"
+        print(f"{header} {'tools':>6} {'usd':>9}")
+
+        for command, total in grouped.items():
+            print(row(command, total))
+        print(row("TOTAL", overall))
+
+        if cached:
+            billed = overall.input_tokens + overall.cache_read_tokens + overall.cache_write_tokens
+            print(f"\n{overall.cache_read_tokens / billed:.0%} of input tokens came from cache.")
+
+        print("\nEstimated from the Bedrock rate card for us-east-1, not an invoice.")
         return 0
 
     if args.command == "ask":

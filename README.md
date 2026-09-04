@@ -97,6 +97,14 @@ flowchart TB
     class VF,GW check
 ```
 
+**Cost.** Every model response carries its own token counts, in four billable
+categories: input, output, cache read, and cache write. `estimate_usd` prices
+each at the rate from your account's Bedrock rate card, applies the `global.`
+profile discount, and returns a `Decimal`. Cache tokens are reported *separately*
+from `input_tokens` by the API, so they are added, not assumed to be included —
+leaving them out would let a cached run pass a token budget it had exceeded.
+`halo spend` shows cache columns once anything has been cached.
+
 **Reading it.** The three paths differ only in where their evidence comes from.
 M1 has none, so it cannot reach `COMPLETED` — `UngroundedDraft` has no field
 that could hold a citation. M2 gets evidence from tools and cites a

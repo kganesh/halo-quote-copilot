@@ -66,10 +66,22 @@ PRICE_PER_MTOK: dict[str, tuple[Decimal, Decimal]] = {
 GLOBAL_DISCOUNT = Decimal("0.909091")
 """`global.` profiles bill 3.00/15.00 where regional bills 3.30/16.50."""
 
-CACHE_READ_FRACTION = Decimal("0.1")
-"""A cached input token costs a tenth of a fresh one: $0.33 against $3.30 on
-Sonnet 4.6. The sourcing loop resends its whole transcript every turn, so
-caching is the first thing to try when a tool loop becomes expensive."""
+# Cache rates are multiples of whatever the input rate is, and the same
+# multiples apply to regional and global profiles. Read from the same rate card:
+# on Sonnet 4.6 regional, input is 3.30 and cache read is 0.33; on global, input
+# is 3.00 and cache read is 0.30. Both are a tenth. So the global discount is
+# applied to the base rate first, and the multiplier after.
+CACHE_READ_MULTIPLIER = Decimal("0.10")
+"""A cached input token costs a tenth of a fresh one."""
+
+CACHE_WRITE_5M_MULTIPLIER = Decimal("1.25")
+"""Writing to the 5-minute cache costs a quarter more than a fresh input token.
+
+Caching only pays off if the prefix is read back. One write plus one read costs
+1.35x a single uncached call; the second read is where it turns profitable."""
+
+CACHE_WRITE_1H_MULTIPLIER = Decimal("2.00")
+"""The 1-hour cache costs twice a fresh input token to write."""
 
 
 def _price_key(model: str) -> str | None:
@@ -87,7 +99,71 @@ def _price_key(model: str) -> str | None:
     return next((key for key in PRICE_PER_MTOK if trimmed.startswith(key)), None)
 
 
-def estimate_usd(model: str, input_tokens: int, output_tokens: int) -> Decimal:
+@dataclass(frozen=True)
+class TokenCounts:
+    """The four billable token categories in one response.
+
+    They are separate counts, not subsets. `input_tokens` from the API excludes
+    anything served from cache or written to it, so the real input size is the
+    sum of all three input categories. Reading only `input_tokens` on a cached
+    call under-reports both the spend and the context size.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
+
+    @property
+    def cache_write_tokens(self) -> int:
+        return self.cache_write_5m_tokens + self.cache_write_1h_tokens
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+        )
+
+
+def counts_from(usage: Any) -> TokenCounts:
+    """Read the token categories out of an SDK usage object.
+
+    The 5-minute and 1-hour caches are priced differently, so the breakdown in
+    `cache_creation` is used when the SDK provides it. When it does not, the
+    total falls back to the 5-minute rate, which is the default TTL and the
+    cheaper of the two — so a missing breakdown under-reports rather than
+    over-reports, and the run is not stopped by a budget it did not spend.
+    """
+    write_5m = write_1h = 0
+    breakdown = getattr(usage, "cache_creation", None)
+    if breakdown is not None:
+        write_5m = getattr(breakdown, "ephemeral_5m_input_tokens", 0) or 0
+        write_1h = getattr(breakdown, "ephemeral_1h_input_tokens", 0) or 0
+    if not (write_5m or write_1h):
+        write_5m = getattr(usage, "cache_creation_input_tokens", 0) or 0
+
+    return TokenCounts(
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+        cache_write_5m_tokens=write_5m,
+        cache_write_1h_tokens=write_1h,
+    )
+
+
+def estimate_usd(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    cache_read_tokens: int = 0,
+    cache_write_5m_tokens: int = 0,
+    cache_write_1h_tokens: int = 0,
+) -> Decimal:
     """Cost of one call.
 
     An unknown model returns zero instead of raising an exception. A budget is a
@@ -97,15 +173,33 @@ def estimate_usd(model: str, input_tokens: int, output_tokens: int) -> Decimal:
     key = _price_key(model)
     if key is None:
         return Decimal("0.00")
+
     price_in, price_out = PRICE_PER_MTOK[key]
     if model.startswith("global."):
         price_in *= GLOBAL_DISCOUNT
         price_out *= GLOBAL_DISCOUNT
+
     million = Decimal(1_000_000)
-    cost = (Decimal(input_tokens) / million) * price_in + (
-        Decimal(output_tokens) / million
-    ) * price_out
+    cost = (
+        Decimal(input_tokens) * price_in
+        + Decimal(output_tokens) * price_out
+        + Decimal(cache_read_tokens) * price_in * CACHE_READ_MULTIPLIER
+        + Decimal(cache_write_5m_tokens) * price_in * CACHE_WRITE_5M_MULTIPLIER
+        + Decimal(cache_write_1h_tokens) * price_in * CACHE_WRITE_1H_MULTIPLIER
+    ) / million
     return cost.quantize(Decimal("0.000001"))
+
+
+def estimate_usd_for(model: str, counts: TokenCounts) -> Decimal:
+    """`estimate_usd` for a whole `TokenCounts`."""
+    return estimate_usd(
+        model,
+        counts.input_tokens,
+        counts.output_tokens,
+        cache_read_tokens=counts.cache_read_tokens,
+        cache_write_5m_tokens=counts.cache_write_5m_tokens,
+        cache_write_1h_tokens=counts.cache_write_1h_tokens,
+    )
 
 
 @dataclass(frozen=True)
@@ -223,15 +317,21 @@ class BedrockClient:
             thinking={"type": "adaptive"},
         )
 
-        usage = response.usage
-        usd = estimate_usd(self.model, usage.input_tokens, usage.output_tokens)
+        counts = counts_from(response.usage)
+        usd = estimate_usd_for(self.model, counts)
         if self._tracker is not None:
-            self._tracker.record_model_call(usage.input_tokens, usage.output_tokens, usd)
+            self._tracker.record_model_call(
+                counts.input_tokens,
+                counts.output_tokens,
+                usd,
+                cache_read_tokens=counts.cache_read_tokens,
+                cache_write_tokens=counts.cache_write_tokens,
+            )
 
         return ModelResult(
             parsed=response.parsed_output,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
+            input_tokens=counts.input_tokens,
+            output_tokens=counts.output_tokens,
             usd=usd,
             model=self.model,
             stop_reason=response.stop_reason,
@@ -263,15 +363,21 @@ class BedrockClient:
             thinking={"type": "adaptive"},
         )
 
-        usage = response.usage
-        usd = estimate_usd(self.model, usage.input_tokens, usage.output_tokens)
+        counts = counts_from(response.usage)
+        usd = estimate_usd_for(self.model, counts)
         if self._tracker is not None:
-            self._tracker.record_model_call(usage.input_tokens, usage.output_tokens, usd)
+            self._tracker.record_model_call(
+                counts.input_tokens,
+                counts.output_tokens,
+                usd,
+                cache_read_tokens=counts.cache_read_tokens,
+                cache_write_tokens=counts.cache_write_tokens,
+            )
 
         return ModelTurn(
             content=list(response.content),
             stop_reason=response.stop_reason,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
+            input_tokens=counts.input_tokens,
+            output_tokens=counts.output_tokens,
             usd=usd,
         )

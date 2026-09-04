@@ -38,6 +38,8 @@ def record(command: str, model: str, usage: Usage, *, path: Path | None = None) 
         "model": model,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
+        "cache_read_tokens": usage.cache_read_tokens,
+        "cache_write_tokens": usage.cache_write_tokens,
         "tool_calls": usage.tool_calls,
         "usd": str(usage.usd),
     }
@@ -55,6 +57,8 @@ class Total:
     runs: int
     input_tokens: int
     output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
     tool_calls: int
     usd: Decimal
 
@@ -73,10 +77,14 @@ def read(path: Path | None = None) -> list[dict]:
 
 
 def totals(entries: list[dict]) -> Total:
+    # `.get` with a default on the cache fields, because rows written before
+    # cache accounting existed do not have them and are still worth counting.
     return Total(
         runs=len(entries),
         input_tokens=sum(e["input_tokens"] for e in entries),
         output_tokens=sum(e["output_tokens"] for e in entries),
+        cache_read_tokens=sum(e.get("cache_read_tokens", 0) for e in entries),
+        cache_write_tokens=sum(e.get("cache_write_tokens", 0) for e in entries),
         tool_calls=sum(e.get("tool_calls", 0) for e in entries),
         usd=sum((Decimal(e["usd"]) for e in entries), Decimal("0")),
     )
