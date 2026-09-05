@@ -59,96 +59,111 @@ in the seed data — is in [docs/domain.md](docs/domain.md).
 
 ## Architecture
 
-Three commands, three agents, one rule. Every agent must say where a value came
-from, and the code checks the source really contains it before the run can
-complete.
+One rule, applied five times. Every agent must say where a value came from, and
+the code checks the source really contains it before the run can complete.
 
 ```mermaid
 flowchart TB
     subgraph CLI["halo — command line"]
-        Q["quote"]
-        S["source"]
-        A["ask"]
+        RUN["run"]
+        SRC["source"]
+        ASK["ask"]
+        APR["pending / approve"]
     end
 
-    subgraph AG["agents/ — each returns an Outcome, never a string"]
-        D["drafter (M1)<br/>no tools, no corpus"]
-        SO["sourcing (M2)<br/>tool-use loop"]
+    ADM["admission<br/>claims → Principal, frozen"]
+
+    subgraph AG["agents/"]
+        SUP["supervisor (M6)<br/>delegates · margin · assembles"]
+        SP["pricing · supply · logistics<br/>own budget, own tools"]
         AD["advisor (M3)<br/>retrieve then answer"]
+        SO["sourcing (M2)<br/>the single loop, kept"]
     end
 
     subgraph PF["platform/ — shared by every agent"]
-        GW["Gateway<br/>allow-list · timeout<br/>dedup · audit"]
+        GW["gateway<br/>allow-list · timeout · dedup<br/>audit · attaches identity"]
+        ENV["envelope + guardrail<br/>evidence is data, never instruction"]
         BT["BudgetTracker<br/>time · tokens · calls · USD"]
-        LD["ledger<br/>spend per run"]
+        CHK["checkpoint<br/>evidence, not the question"]
+        OBS["telemetry + events<br/>spans · redacted record"]
     end
 
     subgraph EV["evidence sources"]
-        M1S["pim_oms<br/>catalog · price · margin"]
-        M2S["supplier<br/>stock · capacity · charges"]
-        M3S["shipping<br/>zones · transit"]
+        ACC["accounts<br/>scoped, returns 403"]
+        PIM["pim_oms<br/>catalog · price · margin"]
+        SUPP["supplier<br/>stock · capacity · charges"]
+        SHIP["shipping<br/>zones · transit"]
         IX["Atlas index<br/>25 docs → 80 chunks"]
     end
 
     BR["Amazon Bedrock<br/>Claude Sonnet 4.6 · Titan v2"]
     VF{"verify()<br/>does the source<br/>contain the value?"}
-    OK["COMPLETED<br/>Quote or answer, with citations"]
+    MG{"margin<br/>at or above the floor?"}
+    OK["COMPLETED<br/>a citation per figure"]
     ESC["ESCALATED<br/>names the exact problem"]
+    REF["REFUSED<br/>guardrail or scope"]
 
-    Q --> D
-    S --> SO
-    A --> AD
+    RUN --> ADM
+    SRC --> ADM
+    ASK --> ADM
+    APR --> CHK
 
-    D -->|"one call, no evidence"| BR
-    SO -->|"tool_use loop"| BR
+    ADM --> SUP
+    ADM --> SO
+    ADM --> AD
+
+    SUP --> SP
+    SP -->|"tool_use loop"| BR
     AD -->|"question + 6 excerpts"| BR
+    SO -->|"tool_use loop"| BR
 
+    SP -->|"routed call"| GW
     SO -->|"routed call"| GW
-    GW -->|"MCP over stdio"| M1S
-    GW -->|"MCP over stdio"| M2S
-    GW -->|"MCP over stdio"| M3S
-    GW -->|"tc-0001 …<br/>one row per call"| VF
+    GW -->|"MCP over stdio"| ACC
+    GW --> PIM
+    GW --> SUPP
+    GW --> SHIP
+    GW -->|"results wrapped as evidence"| ENV
+    AD -->|"BM25 + cosine, fused by RRF"| IX
 
-    AD -->|"hybrid search<br/>BM25 + cosine, fused by RRF"| IX
-    IX -->|"chunk ids + text"| VF
+    ENV --> VF
+    IX --> VF
+    ACC -->|"403 ends the run"| REF
+    ENV -->|"commitment · PII · injection"| REF
 
-    D -->|"no citation field exists"| ESC
-    SO -->|"figure + tool_call_id"| VF
-    AD -->|"claim + chunk_id + exact quote"| VF
-
-    VF -->|"every source checks out"| OK
     VF -->|"missing or mismatched"| ESC
+    VF -->|"every source checks out"| MG
+    MG -->|"below"| CHK
+    MG -->|"at or above"| OK
+    CHK -->|"approved: no model, no tools"| OK
 
-    BT -.->|"checked before every step"| SO
-    BT -.->|"checked before every step"| AD
-    BR -.->|"tokens and cost"| LD
+    BT -.->|"checked before every step"| SP
+    BT -.->|"per specialist and per run"| SUP
+    BR -.->|"four token categories"| OBS
+    GW -.-> OBS
 
     classDef done fill:#E1F1EA,stroke:#1A6F53,color:#0F1728
     classDef stop fill:#F8E6E6,stroke:#A82A2A,color:#0F1728
     classDef check fill:#F7E4EE,stroke:#A81C63,color:#0F1728
     class OK done
-    class ESC stop
-    class VF,GW check
+    class ESC,REF stop
+    class VF,MG,GW,ENV,ADM check
 ```
 
-**Cost.** Every model response carries its own token counts, in four billable
-categories: input, output, cache read, and cache write. `estimate_usd` prices
-each at the rate from your account's Bedrock rate card, applies the `global.`
-profile discount, and returns a `Decimal`. Cache tokens are reported *separately*
-from `input_tokens` by the API, so they are added, not assumed to be included —
-leaving them out would let a cached run pass a token budget it had exceeded.
-`halo spend` shows cache columns once anything has been cached.
+**Reading it.** The paths differ only in where their evidence comes from. M1's
+drafter has none, so it cannot reach `COMPLETED` — `UngroundedDraft` has no field
+that could hold a citation. The specialists get theirs from tools and cite a
+`tool_call_id`. The advisor gets it from retrieved chunks and cites a `chunk_id`
+plus the exact sentence.
 
-**Reading it.** The three paths differ only in where their evidence comes from.
-M1 has none, so it cannot reach `COMPLETED` — `UngroundedDraft` has no field
-that could hold a citation. M2 gets evidence from tools and cites a
-`tool_call_id`. M3 gets it from retrieved chunks and cites a `chunk_id` plus the
-exact sentence.
+`verify()` is the same idea in both cases. It is not enough that the cited source
+exists: the value has to appear in it. A model will cite a real tool call for a
+number that call never returned, and name a real chunk for a sentence that is not
+in it. Checking only the id would accept both.
 
-`verify()` is the same idea in both cases. It is not enough that the cited
-source exists. The value has to appear in it. A model will cite a real tool call
-for a number that call never returned, and it will name a real chunk for a
-sentence that is not in it. Checking only the id would accept both.
+**Seven more diagrams, one question each** — the request lifecycle, identity, the
+untrusted boundary, cost per call, the CI gates, observability and deployment —
+are in [docs/architecture.md](docs/architecture.md).
 
 ## Stack
 
