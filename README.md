@@ -8,6 +8,41 @@ escalates and says why.
 
 Design and milestone plan: https://claude.ai/code/artifact/b3bf21a2-1e31-45c7-816b-66aa040ec8c3
 
+## What it does
+
+- **Drafts a sourced quote from a plain-English request.** A supervisor
+  delegates to four bounded specialists — pricing, supply, logistics, policy —
+  and assembles a quote where every figure names the `tool_call_id` it came
+  from. `halo run`
+- **Answers a policy question from the written corpus.** Decoration limits,
+  rush eligibility, margin floors: the things no tool can answer, quoted
+  verbatim from the Atlas document that says so. `halo ask`
+- **Refuses to invent a number.** A figure that does not appear in the tool
+  result it cites fails verification, and the run escalates instead of
+  producing a quote that reads correctly and is wrong. `halo source`
+- **Stops a thin margin for a human.** A quote under the category floor
+  checkpoints its evidence, notifies, and waits. Approving assembles the quote
+  the manager actually saw — no model call, no tool call, no re-fetch.
+  `halo pending`, `halo approve`
+- **Keeps one seller out of another's accounts.** Cognito claims become a
+  principal at admission, the gateway attaches it to every scoped call, and the
+  account server returns a 403 the agent has to report. `halo account`
+- **Survives a hostile supplier note.** Twenty attacks written the way a real
+  one arrives — buried in a production comment — run against a model that obeys
+  every one of them, and none reaches a quote. `halo redteam`
+- **Prices its own runs and stops when they cost too much.** Four token
+  categories from the account's Bedrock rate card, per-specialist budgets, and
+  a ledger of what each command has spent. `halo spend`
+- **Explains a run decision by decision.** Five span kinds — state, model,
+  tool, decision, approval — plus a versioned, redacted event record for the
+  auditor who asks in eleven months. `halo run --trace`
+- **Fails a build on a regression rather than a demo.** Retrieval, fixture,
+  grounding, red-team and teardown gates, all offline, all in CI.
+  `halo gate`
+- **Tears the whole stack down to nothing.** Terraform for what is actually
+  called, no VPC and no idle compute, and a check that nothing survives a
+  `destroy`. `halo teardown`
+
 ## The flow
 
 > Customer wants 500 hoodies, 3-colour front print, delivered to Chicago by
