@@ -396,3 +396,33 @@ class TestUsageOnSpans:
         attributes = exporter.get_finished_spans()[0].attributes
         assert attributes["halo.cache_read_tokens"] == 3
         assert attributes["halo.cache_write_tokens"] == 2
+
+
+class TestTheGateIsRunnableOnACleanCheckout:
+    """CI checks out a repo with no `data/seed` in it — the generator is the
+    source of truth and the corpus is not committed. This was red from M4 to M8
+    because the workflow had no seed step, and the failure arrived as a
+    traceback from inside a lambda rather than as the setup problem it was."""
+
+    def test_a_missing_corpus_reports_itself_rather_than_crashing(self, monkeypatch):
+        from halo.mcp_servers import store
+
+        def missing(name, seed_dir=None):
+            raise store.CorpusMissing(store.SEED_DIR / f"{name}.json")
+
+        monkeypatch.setattr(store, "_table", missing)
+        result = gates.check_corpus()
+
+        assert result is not None
+        assert not result.passed
+        assert "make seed" in result.detail
+
+    def test_the_workflow_seeds_before_it_tests(self):
+        from pathlib import Path
+
+        workflow = Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml"
+        body = workflow.read_text()
+
+        assert "halo.seed.generate" in body
+        assert body.index("halo.seed.generate") < body.index("pytest -q")
+        assert body.index("halo.seed.generate") < body.index("halo gate")

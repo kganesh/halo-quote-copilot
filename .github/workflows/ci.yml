@@ -28,6 +28,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Seed
+        # The corpus is generated from a fixed seed and is not committed — the
+        # generator is the source of truth. Without this step the tool servers
+        # have no system of record to read, and everything downstream of them
+        # fails for a reason that has nothing to do with the change being tested.
+        run: python -m halo.seed.generate
+
       - name: Lint
         run: |
           ruff check src tests

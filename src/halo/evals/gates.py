@@ -159,9 +159,28 @@ def check_teardown() -> list[GateResult]:
     return [GateResult(finding.resource, False, finding.problem) for finding in findings]
 
 
+def check_corpus() -> GateResult | None:
+    """A missing corpus is a setup problem, not twenty failing gates.
+
+    The red-team set runs against the real tool servers, which read the generated
+    seed. Without it every note fails somewhere inside a lambda, and the report
+    blames the guardrail for a missing file.
+    """
+    from halo.mcp_servers.store import CorpusMissing, products
+
+    try:
+        products()
+    except CorpusMissing as missing:
+        return GateResult("corpus", False, str(missing))
+    return None
+
+
 async def run_all() -> dict[str, list[GateResult]]:
     """Every offline gate. The red-team set is one of them."""
     from halo.evals.redteam import run_offline
+
+    if missing := check_corpus():
+        return {"corpus": [missing]}
 
     chunks = corpus()
     redteam = [
