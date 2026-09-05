@@ -91,7 +91,8 @@ Bedrock policies, which grant far more than this project uses.
       "Action": [
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream",
-        "bedrock:ApplyGuardrail"
+        "bedrock:ApplyGuardrail",
+        "s3:PutObject"
       ],
       "Resource": [
         "arn:aws:bedrock:*::foundation-model/anthropic.*",
@@ -355,7 +356,54 @@ halo account --claims '{"sub":"usr-mwes00","cognito:groups":"halo-sales-manager"
 
 ---
 
-## 8. Validate
+## 8. The evidence bucket (M7)
+
+Optional. Without it, events land in `data/events.jsonl` beside the ledger and
+the trace goes nowhere unless you pass `--trace`.
+
+The retention rule goes in the same commit as the bucket, not later. "Forgotten
+logs, per GB-month, forever" is on this project's cost list because it is the
+line item nobody notices until it is a year old.
+
+```bash
+aws s3api create-bucket --bucket halo-evidence-$ACCOUNT_ID \
+  --region "$AWS_REGION" --create-bucket-configuration LocationConstraint="$AWS_REGION"
+
+aws s3api put-public-access-block --bucket halo-evidence-$ACCOUNT_ID \
+  --public-access-block-configuration \
+    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+aws s3api put-bucket-encryption --bucket halo-evidence-$ACCOUNT_ID \
+  --server-side-encryption-configuration \
+    '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"aws:kms"}}]}'
+
+# Set on day one, not when the bill arrives.
+aws s3api put-bucket-lifecycle-configuration --bucket halo-evidence-$ACCOUNT_ID \
+  --lifecycle-configuration '{"Rules":[
+      {"ID":"events-to-ia","Status":"Enabled","Filter":{"Prefix":"events/"},
+       "Transitions":[{"Days":30,"StorageClass":"STANDARD_IA"}],
+       "Expiration":{"Days":400}}]}'
+
+export HALO_EVENTS_BUCKET=halo-evidence-$ACCOUNT_ID
+```
+
+The caller needs `s3:PutObject` on `arn:aws:s3:::halo-evidence-*/events/*`, and
+nothing else: this code never reads the bucket back. Whoever investigates uses
+Athena over the `kind=…/date=…` partitions.
+
+Two things about what lands there:
+
+- **Events are redacted when they are built**, not when they are read. The
+  patterns are the guardrail's own PII rules, so what the guardrail refuses to
+  say in an answer is what the record refuses to keep.
+- **Traces are a different record with different rules.** Span attributes are
+  ids, counts and outcomes — no prompt, no excerpt, no supplier note — because a
+  trace goes to a third-party backend and the corpus does not. Point an OTLP
+  exporter at `telemetry.configure` in a deployment.
+
+---
+
+## 9. Validate
 
 ```bash
 halo doctor

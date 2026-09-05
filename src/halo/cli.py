@@ -26,11 +26,12 @@ from halo.doctor import run as doctor_run
 from halo.domain.quote import Quote
 from halo.domain.request import QuoteRequest, UngroundedDraft
 from halo.mcp_servers import SCOPED_TOOLS
-from halo.platform import ledger
+from halo.platform import ledger, telemetry
 from halo.platform.admission import AdmissionError, principal_from_claims
 from halo.platform.bedrock import DEFAULT_MODEL, DEFAULT_REGION, BedrockClient, UnpricedModel
 from halo.platform.budget import Budget, BudgetTracker
 from halo.platform.checkpoint import ApprovalError, FileCheckpointStore, approve
+from halo.platform.events import sink_from_env
 from halo.platform.gateway import McpGateway, ToolSpec
 from halo.platform.guardrails import BedrockGuardrail, Guardrail, LocalGuardrail
 from halo.platform.identity import Principal
@@ -357,6 +358,7 @@ async def _run(args, client_factory, principal: Principal):
             gateway=gateway,
             guardrail=_guardrail(args),
             retriever=_retriever(args.region) if args.policy else None,
+            events=sink_from_env(),
         )
         return outcome, gateway.audit
 
@@ -436,6 +438,11 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     run_.add_argument("--model", default=DEFAULT_MODEL)
     run_.add_argument("--json", action="store_true")
     run_.add_argument(
+        "--trace",
+        action="store_true",
+        help="print the trace: every state, model, tool, decision and approval",
+    )
+    run_.add_argument(
         "--policy",
         action="store_true",
         help="also run the policy specialist over Atlas (needs `make ingest`)",
@@ -445,6 +452,8 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
 
     pending = sub.add_parser("pending", help="quotes waiting for a margin approval")
     _add_identity_flags(pending)
+
+    sub.add_parser("gate", help="the offline evaluation gates CI runs")
 
     approve_ = sub.add_parser("approve", help="release a checkpoint and finish the quote")
     approve_.add_argument("checkpoint_id")
@@ -605,6 +614,18 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
         return 2
 
     if args.command == "run":
+        # Collected in memory rather than exported, because the deliverable is a
+        # trace someone reads on a terminal. A deployment passes an OTLP exporter
+        # to the same `configure`.
+        spans = None
+        if args.trace:
+            from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+                InMemorySpanExporter,
+            )
+
+            spans = InMemorySpanExporter()
+            telemetry.configure(spans)
+
         try:
             outcome, audit = asyncio.run(_run(args, client_factory, principal))
         except (anthropic.APIError, RuntimeError) as error:
@@ -615,7 +636,19 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
             print(json.dumps(outcome.model_dump(mode="json"), indent=2))
         else:
             print(render_sourced(outcome, audit))
+        if spans is not None:
+            print("\nTRACE")
+            print(telemetry.render_trace(spans.get_finished_spans()))
         return 0 if outcome.status is OutcomeStatus.COMPLETED else 2
+
+    if args.command == "gate":
+        from halo.evals.gates import passed, report, run_all
+
+        gates = asyncio.run(run_all())
+        print(report(gates))
+        # Non-zero fails the build. That is the whole point of the command: a
+        # grounding regression should stop a merge, not surface in a demo.
+        return 0 if passed(gates) else 2
 
     if args.command == "pending":
         checkpoints = FileCheckpointStore().open_checkpoints()
@@ -639,7 +672,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
         # No client and no gateway: the quote is assembled from the evidence the
         # paused run already gathered. Re-running it would produce a different
         # quote from the one that was approved.
-        outcome = resume_run(released)
+        outcome = resume_run(released, events=sink_from_env())
         if args.json:
             print(json.dumps(outcome.model_dump(mode="json"), indent=2))
         else:

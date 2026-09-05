@@ -29,6 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from halo.platform import telemetry
 from halo.platform.budget import BudgetTracker
 from halo.platform.identity import Principal
 
@@ -172,11 +173,35 @@ class _BaseGateway(_GatewayPolicy):
             arguments=arguments,
             as_principal=self.principal.user_id if spec.scoped and self.principal else None,
         )
+        # The span carries the call id and not the arguments. The id is what a
+        # quote cites, so it is the join between a trace and the evidence; the
+        # arguments can hold an account id, a destination and a quantity, which
+        # belong in the event record rather than in a tracing backend.
+        span = telemetry.span(
+            telemetry.TOOL,
+            name,
+            tool_call_id=call.id,
+            scoped=spec.scoped,
+            as_principal=call.as_principal,
+        )
         invocation = (
             {**arguments, "principal": self.principal.model_dump(mode="json")}
             if spec.scoped and self.principal is not None
             else arguments
         )
+        with span as current:
+            await self._run(spec, call, invocation)
+            current.set_attribute("halo.ok", call.ok)
+            if call.error:
+                current.set_attribute("halo.error", call.error)
+
+        call.duration_ms = (time.monotonic() - started) * 1000
+        self._audit.append(call)
+        self._seen[key] = call
+        return call
+
+    async def _run(self, spec: ToolSpec, call: ToolCall, invocation: dict[str, Any]) -> None:
+        """Invoke the tool and record the answer on the call, error included."""
         try:
             call.result = await asyncio.wait_for(
                 self._invoke(spec, invocation), timeout=spec.timeout_seconds
@@ -192,11 +217,6 @@ class _BaseGateway(_GatewayPolicy):
             call.error = f"timed out after {spec.timeout_seconds}s"
         except Exception as exc:  # noqa: BLE001 - the audit row is the handling
             call.error = f"{type(exc).__name__}: {exc}"
-        call.duration_ms = (time.monotonic() - started) * 1000
-
-        self._audit.append(call)
-        self._seen[key] = call
-        return call
 
 
 class InProcessGateway(_BaseGateway):

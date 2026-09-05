@@ -85,25 +85,24 @@ class Guardrail(Protocol):
     ) -> GuardrailVerdict: ...
 
 
+PII_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}"),
+    re.compile(r"\b(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b"),
+    re.compile(r"\b(?:\d[ -]?){13,16}\b"),
+)
+"""Email, phone, card. Shared with the event envelope on purpose.
+
+What the guardrail refuses to say in an answer is what the record refuses to
+keep. Two lists would drift, and the drift would be invisible: the guardrail is
+exercised by twenty red-team notes on every build, and a redaction rule nobody
+tests is found by an auditor."""
+
+
 # Each rule is (category, pattern, surfaces it blocks on). A rule that matches on
 # a surface it does not block on is still reported. `re.VERBOSE` is not used, so
 # that a pattern can be copied straight into a Bedrock topic definition.
 _RULES: list[tuple[Category, re.Pattern[str], frozenset[Surface]]] = [
-    (
-        Category.PII,
-        re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}"),
-        frozenset({Surface.OUTPUT}),
-    ),
-    (
-        Category.PII,
-        re.compile(r"\b(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b"),
-        frozenset({Surface.OUTPUT}),
-    ),
-    (
-        Category.PII,
-        re.compile(r"\b(?:\d[ -]?){13,16}\b"),
-        frozenset({Surface.OUTPUT}),
-    ),
+    *((Category.PII, pattern, frozenset({Surface.OUTPUT})) for pattern in PII_PATTERNS),
     (
         Category.DISCOUNT_COMMITMENT,
         re.compile(

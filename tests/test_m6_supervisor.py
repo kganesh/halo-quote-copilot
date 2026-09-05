@@ -208,8 +208,11 @@ class TestApproval:
 
         import inspect
 
+        # Named absences rather than an exact signature: M7 added an event sink,
+        # which cannot call a model or a tool. These three can, and none of them
+        # may be reachable from a resume.
         parameters = inspect.signature(supervisor.resume).parameters
-        assert set(parameters) == {"checkpoint"}
+        assert {"client", "gateway", "retriever"}.isdisjoint(parameters)
         assert supervisor.resume(released).status is OutcomeStatus.COMPLETED
 
     async def test_the_resumed_quote_is_the_one_that_was_approved(self, store):

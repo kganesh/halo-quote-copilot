@@ -24,6 +24,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from halo.agents.provenance import FigureCheck, verify_figures
+from halo.platform import telemetry
 from halo.platform.bedrock import ModelClient
 from halo.platform.budget import Budget, BudgetExceeded, BudgetTracker
 from halo.platform.envelope import EVIDENCE_RULE, Evidence, wrap
@@ -93,6 +94,12 @@ async def run_specialist(
     The tracker is created here, from the specialist's own budget, so that a
     runaway pricing loop cannot spend the supply specialist's allowance. The
     supervisor sums what they each used; it does not hand out one pool.
+
+    The whole run is one `state` span, with a `model` span per turn, a `tool`
+    span per call from the gateway underneath, and a `decision` span wherever the
+    harness concluded something. Every exit from `finish` records one, because a
+    trace that only spans the successful path cannot explain a run that produced
+    nothing.
     """
     tracker = BudgetTracker(specialist.budget, owner=specialist.name)
     system = (
@@ -103,137 +110,155 @@ async def run_specialist(
 
     def finish(status: OutcomeStatus, **fields: Any) -> tuple[SpecialistRun, None]:
         outcome = Outcome(status=status, agent=specialist.name, usage=tracker.usage, **fields)
+        with telemetry.span(telemetry.DECISION, f"{specialist.name}.stopped") as decision:
+            telemetry.record_outcome(decision, outcome)
         return SpecialistRun(specialist.name, outcome, gateway.audit[before:]), None
 
-    try:
-        for _ in range(specialist.max_turns):
-            tracker.check()
-            turn = client.converse(system=system, messages=messages, tools=specialist.tools)
-            _charge(tracker, turn)
-            messages.append({"role": "assistant", "content": turn.content})
-
-            if turn.stop_reason != "tool_use":
-                break
-
-            results = []
-            for block in turn.tool_uses:
-                route = specialist.routes.get(block.name, block.name)
-                call = await gateway.call(route, dict(block.input))
-                # Counted here as well as on the gateway. The gateway's tracker,
-                # when it has one, is the whole run; `max_tool_calls` on a
-                # specialist's budget is only a limit if the specialist's own
-                # tracker is the one counting.
-                tracker.record_tool_call()
+    with telemetry.span(telemetry.STATE, specialist.name, max_turns=specialist.max_turns):
+        try:
+            for _ in range(specialist.max_turns):
                 tracker.check()
+                with telemetry.span(telemetry.MODEL, f"{specialist.name}.turn") as model_span:
+                    turn = client.converse(system=system, messages=messages, tools=specialist.tools)
+                    _charge(tracker, turn)
+                    model_span.set_attribute("halo.stop_reason", str(turn.stop_reason))
+                    telemetry.record_usage(model_span, tracker.usage)
+                messages.append({"role": "assistant", "content": turn.content})
 
-                # M5: a refusal is an answer. It ends this specialist rather than
-                # becoming an error the model works around with what it holds.
-                if is_denial(call.error):
-                    return finish(
-                        OutcomeStatus.REFUSED,
-                        escalation_reason=f"{call.name} ({call.id}) {call.error}",
-                        next_state="denied_by_scope",
+                if turn.stop_reason != "tool_use":
+                    break
+
+                results = []
+                for block in turn.tool_uses:
+                    route = specialist.routes.get(block.name, block.name)
+                    call = await gateway.call(route, dict(block.input))
+                    # Counted here as well as on the gateway. The gateway's tracker,
+                    # when it has one, is the whole run; `max_tool_calls` on a
+                    # specialist's budget is only a limit if the specialist's own
+                    # tracker is the one counting.
+                    tracker.record_tool_call()
+                    tracker.check()
+
+                    # M5: a refusal is an answer. It ends this specialist rather than
+                    # becoming an error the model works around with what it holds.
+                    if is_denial(call.error):
+                        return finish(
+                            OutcomeStatus.REFUSED,
+                            escalation_reason=f"{call.name} ({call.id}) {call.error}",
+                            next_state="denied_by_scope",
+                        )
+
+                    body = json.dumps(
+                        {
+                            "tool_call_id": call.id,
+                            "result" if call.ok else "error": call.result
+                            if call.ok
+                            else call.error,
+                        },
+                        default=str,
                     )
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": wrap(Evidence(id=call.id, source=call.name, body=body)),
+                            "is_error": not call.ok,
+                        }
+                    )
+                messages.append({"role": "user", "content": results})
+            else:
+                return finish(
+                    OutcomeStatus.ESCALATED,
+                    escalation_reason=f"{specialist.name} used {specialist.max_turns} turns "
+                    "without reaching an answer",
+                    next_state="needs_human_sourcing",
+                )
 
-                body = json.dumps(
-                    {
-                        "tool_call_id": call.id,
-                        "result" if call.ok else "error": call.result if call.ok else call.error,
-                    },
-                    default=str,
+            succeeded = {call.name for call in gateway.audit[before:] if call.ok}
+            if missing := specialist.required_routes - succeeded:
+                return finish(
+                    OutcomeStatus.ESCALATED,
+                    escalation_reason=(
+                        f"{specialist.name} is incomplete — these tools were never called "
+                        f"successfully: {', '.join(sorted(missing))}"
+                    ),
+                    next_state="needs_human_sourcing",
                 )
-                results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": wrap(Evidence(id=call.id, source=call.name, body=body)),
-                        "is_error": not call.ok,
-                    }
+
+            tracker.check()
+            with telemetry.span(telemetry.MODEL, f"{specialist.name}.report") as model_span:
+                result = client.parse(
+                    system=specialist.report_instruction,
+                    user=_transcript(messages),
+                    output_format=specialist.output,
                 )
-            messages.append({"role": "user", "content": results})
-        else:
+                _charge(tracker, result)
+                telemetry.record_usage(model_span, tracker.usage)
+        except BudgetExceeded as exc:
+            # The done-when for M6. The reason names the dimension and no partial
+            # answer travels with it: a truncated report reads like a complete one
+            # two layers up.
+            #
+            # Which budget ran out is not always this specialist's. The shared model
+            # client and gateway count against the run's budget, and that one can
+            # trip while any specialist happens to be working. Saying "pricing
+            # exhausted its budget" then sends someone to raise a limit that was
+            # never reached.
+            reason = (
+                f"{specialist.name} exhausted its budget: {exc}"
+                if exc.owner == specialist.name
+                else f"the {exc.owner} budget ran out while {specialist.name} was working: {exc}"
+            )
             return finish(
                 OutcomeStatus.ESCALATED,
-                escalation_reason=f"{specialist.name} used {specialist.max_turns} turns "
-                "without reaching an answer",
-                next_state="needs_human_sourcing",
+                escalation_reason=reason,
+                next_state="await_budget_increase",
             )
 
-        succeeded = {call.name for call in gateway.audit[before:] if call.ok}
-        if missing := specialist.required_routes - succeeded:
+        report = result.parsed
+        calls = gateway.audit[before:]
+
+        if problems := verify_figures(report.figure_checks(), calls):
             return finish(
                 OutcomeStatus.ESCALATED,
-                escalation_reason=(
-                    f"{specialist.name} is incomplete — these tools were never called "
-                    f"successfully: {', '.join(sorted(missing))}"
-                ),
-                next_state="needs_human_sourcing",
-            )
-
-        tracker.check()
-        result = client.parse(
-            system=specialist.report_instruction,
-            user=_transcript(messages),
-            output_format=specialist.output,
-        )
-        _charge(tracker, result)
-    except BudgetExceeded as exc:
-        # The done-when for M6. The reason names the dimension and no partial
-        # answer travels with it: a truncated report reads like a complete one
-        # two layers up.
-        #
-        # Which budget ran out is not always this specialist's. The shared model
-        # client and gateway count against the run's budget, and that one can
-        # trip while any specialist happens to be working. Saying "pricing
-        # exhausted its budget" then sends someone to raise a limit that was
-        # never reached.
-        reason = (
-            f"{specialist.name} exhausted its budget: {exc}"
-            if exc.owner == specialist.name
-            else f"the {exc.owner} budget ran out while {specialist.name} was working: {exc}"
-        )
-        return finish(
-            OutcomeStatus.ESCALATED,
-            escalation_reason=reason,
-            next_state="await_budget_increase",
-        )
-
-    report = result.parsed
-    calls = gateway.audit[before:]
-
-    if problems := verify_figures(report.figure_checks(), calls):
-        return finish(
-            OutcomeStatus.ESCALATED,
-            payload=report.model_dump(mode="json"),
-            escalation_reason=(
-                f"{specialist.name} reported figures that could not be traced to the tools "
-                f"that supposedly produced them: {'; '.join(problems)}"
-            ),
-            next_state="needs_regrounding",
-        )
-
-    if guardrail is not None:
-        verdict = guardrail.inspect(_prose(report), surface=Surface.OUTPUT)
-        if verdict.blocked:
-            return finish(
-                OutcomeStatus.REFUSED,
                 payload=report.model_dump(mode="json"),
-                escalation_reason=f"{specialist.name} was blocked: {verdict.summary()}",
-                next_state="blocked_by_guardrail",
+                escalation_reason=(
+                    f"{specialist.name} reported figures that could not be traced to the tools "
+                    f"that supposedly produced them: {'; '.join(problems)}"
+                ),
+                next_state="needs_regrounding",
             )
 
-    run = SpecialistRun(
-        specialist.name,
-        Outcome(
+        if guardrail is not None:
+            verdict = guardrail.inspect(_prose(report), surface=Surface.OUTPUT)
+            if verdict.blocked:
+                return finish(
+                    OutcomeStatus.REFUSED,
+                    payload=report.model_dump(mode="json"),
+                    escalation_reason=f"{specialist.name} was blocked: {verdict.summary()}",
+                    next_state="blocked_by_guardrail",
+                )
+
+        outcome = Outcome(
             status=OutcomeStatus.COMPLETED,
             agent=specialist.name,
             payload=report.model_dump(mode="json"),
             next_state="reported",
             usage=tracker.usage,
-        ),
-        calls,
-    )
-    return run, report
+        )
+        # The successful path gets a decision span too, and it carries the count
+        # of figures that were checked rather than the figures. "Verified" with
+        # nothing behind it is the same sentence whether three figures were
+        # traced or none were reported at all.
+        with telemetry.span(
+            telemetry.DECISION,
+            f"{specialist.name}.verified",
+            figures_checked=len(report.figure_checks()),
+            tool_calls=len(calls),
+        ) as decision:
+            telemetry.record_outcome(decision, outcome)
+
+        return SpecialistRun(specialist.name, outcome, calls), report
 
 
 def _charge(tracker: BudgetTracker, response: Any) -> None:

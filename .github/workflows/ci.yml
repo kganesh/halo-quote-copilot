@@ -3,9 +3,9 @@
 # `ToolGateway` and `Guardrail` each have an in-process implementation, so the
 # only thing missing from a CI run is the network.
 #
-# The red-team suite is a separate step from the tests, although the tests cover
-# it too. A failure here should name itself in the job list rather than arriving
-# as one more red dot in a run of 217.
+# The evaluation gates are a separate step from the tests, although the tests
+# cover them too. A grounding regression should name itself in the job list
+# rather than arriving as one more red dot in a run of 330.
 name: CI
 
 on:
@@ -36,6 +36,8 @@ jobs:
       - name: Tests
         run: pytest -q
 
-      - name: Red team
-        # Exits 2 if any hostile note was carried out.
-        run: halo redteam
+      - name: Gates
+        # Exits 2 on a grounding, retrieval, fixture or red-team regression.
+        # M7's done-when: a regression fails the build rather than reaching a
+        # demo. Everything here runs offline, so no credentials and no spend.
+        run: halo gate

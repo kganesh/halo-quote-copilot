@@ -9,6 +9,7 @@ __pycache__/
 data/seed/
 data/spend.jsonl
 data/checkpoints/
+data/events.jsonl
 data/atlas.db
 
 .env

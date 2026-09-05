@@ -40,6 +40,7 @@ from halo.agents.specialists import (
 from halo.domain.catalog import DecorationMethod
 from halo.domain.quote import Citation, CitationKind, DecorationCharge, Quote, QuoteLine
 from halo.domain.request import QuoteRequest
+from halo.platform import telemetry
 from halo.platform.bedrock import ModelClient
 from halo.platform.budget import BudgetTracker, Usage
 from halo.platform.checkpoint import (
@@ -49,6 +50,7 @@ from halo.platform.checkpoint import (
     new_id,
     now,
 )
+from halo.platform.events import Event, EventSink, NullEventSink
 from halo.platform.gateway import ToolCall, ToolGateway
 from halo.platform.guardrails import Guardrail
 from halo.platform.identity import Principal
@@ -103,10 +105,13 @@ async def draft(
     guardrail: Guardrail | None = None,
     retriever: Any = None,
     store: CheckpointStore | None = None,
+    events: EventSink | None = None,
     today: date | None = None,
 ) -> Outcome:
     """Delegate, check the margin, and either finish or stop for approval."""
     runs: list[SpecialistRun] = []
+    sink = events or NullEventSink()
+    run_id = new_id().replace("chk-", "run-")
 
     pricing_run, pricing = await run_specialist(
         PRICING,
@@ -174,6 +179,37 @@ async def draft(
     achieved = margin_pct(pricing.unit_price.value, pricing.base_cost.value)
     floor = pricing.margin_floor_pct.value
 
+    # The margin test is the decision this whole milestone exists around, so it
+    # is a span whether or not it gates: a quote that sailed through at 36.7% and
+    # one that stopped at 25.4% should be the same shape in a trace, differing in
+    # an attribute rather than in whether the step appears at all.
+    with telemetry.span(
+        telemetry.DECISION,
+        "margin",
+        margin_pct=str(achieved),
+        floor_pct=str(floor),
+        gated=achieved < floor,
+        category=pricing.category,
+    ):
+        pass
+
+    sink.emit(
+        Event(
+            kind="margin_checked",
+            run_id=run_id,
+            agent=AGENT_NAME,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            attributes={
+                "margin_pct": str(achieved),
+                "floor_pct": str(floor),
+                "category": pricing.category,
+                "sku": pricing.sku,
+                "gated": achieved < floor,
+            },
+        )
+    )
+
     if achieved < floor:
         checkpoint = Checkpoint(
             id=new_id(),
@@ -196,6 +232,16 @@ async def draft(
             usage=_usage_of(runs).model_dump(mode="json"),
         )
         (store or FileCheckpointStore()).save(checkpoint)
+        sink.emit(
+            Event(
+                kind="approval_requested",
+                run_id=run_id,
+                agent=AGENT_NAME,
+                tenant_id=principal.tenant_id,
+                user_id=principal.user_id,
+                attributes={"checkpoint_id": checkpoint.id, "reason": checkpoint.reason},
+            )
+        )
         notify(
             f"{checkpoint.id}: {checkpoint.reason} — approve with `halo approve {checkpoint.id}`"
         )
@@ -218,13 +264,15 @@ async def draft(
     return _completed(quote, policy_notes, policy_evidence, _usage_of(runs))
 
 
-def resume(checkpoint: Checkpoint) -> Outcome:
+def resume(checkpoint: Checkpoint, *, events: EventSink | None = None) -> Outcome:
     """Finish an approved run from its checkpoint. No model, no tools.
 
     Every figure here was verified when it was gathered, and the citations
     resolve against the calls stored beside them. Re-fetching would produce a
     different quote from the one that was approved.
     """
+    sink = events or NullEventSink()
+
     if checkpoint.open:
         return Outcome(
             status=OutcomeStatus.ESCALATED,
@@ -233,6 +281,36 @@ def resume(checkpoint: Checkpoint) -> Outcome:
             next_state="awaiting_margin_approval",
             usage=Usage(**checkpoint.usage),
         )
+
+    # The only span kind a human causes. It records who opened the gate and what
+    # they opened, which is the pair an auditor asks for and the pair no other
+    # span in the trace can supply.
+    with telemetry.span(
+        telemetry.APPROVAL,
+        "margin_exception",
+        checkpoint_id=checkpoint.id,
+        approved_by=checkpoint.approved_by,
+        approved_at=checkpoint.approved_at,
+        margin_pct=checkpoint.margin_pct,
+        floor_pct=checkpoint.floor_pct,
+    ):
+        pass
+
+    sink.emit(
+        Event(
+            kind="approval_granted",
+            run_id=checkpoint.id,
+            agent=AGENT_NAME,
+            tenant_id=checkpoint.owner().tenant_id,
+            user_id=checkpoint.approved_by,
+            attributes={
+                "checkpoint_id": checkpoint.id,
+                "margin_pct": checkpoint.margin_pct,
+                "floor_pct": checkpoint.floor_pct,
+                "raised_by": checkpoint.owner().user_id,
+            },
+        )
+    )
 
     request = QuoteRequest.model_validate(checkpoint.request)
     pricing = PricingReport.model_validate(checkpoint.reports["pricing"])

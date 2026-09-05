@@ -1,7 +1,7 @@
 VENV := .venv
 PY   := $(VENV)/bin/python
 
-.PHONY: install seed ingest eval redteam test lint clean
+.PHONY: install seed ingest eval redteam gate test lint clean
 
 install:
 	python3 -m venv $(VENV)
@@ -21,6 +21,10 @@ eval:
 # Offline: 20 hostile notes through the real sourcing loop, no spend.
 redteam:
 	$(VENV)/bin/halo redteam
+
+# Offline: the evaluation gates CI runs — fixtures, retrieval, grounding, red team.
+gate:
+	$(VENV)/bin/halo gate
 
 test:
 	$(VENV)/bin/pytest -q

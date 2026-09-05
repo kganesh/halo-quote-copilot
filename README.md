@@ -148,9 +148,10 @@ catalogue.
 src/halo/
   domain/      the synthetic HALO business: org, catalog, supply, atlas, quote, request
   platform/    contracts every agent obeys: identity, admission, budget, outcome,
-               bedrock, gateway, ledger, envelope, guardrails, checkpoint
+               bedrock, gateway, ledger, envelope, guardrails, checkpoint,
+               telemetry, events
   rag/         chunk, embed, store, bm25, hybrid retrieve, ingest, evaluate
-  evals/       golden sets the CLI runs
+  evals/       golden set, red-team set, and the offline CI gates
   agents/      one function per agent, each returning an Outcome; M6 adds the
                supervisor, the shared bounded loop and the four specialists
   seed/        deterministic corpus generator + the written Atlas corpus
@@ -201,6 +202,12 @@ halo run '{"account_id":"acct-mwes02","product_description":"duffel bags",
 halo pending
 halo approve chk-xxxxxxxxxx --claims "$MANAGER_CLAIMS"
 
+# M7 — the same run, with the trace printed decision by decision
+halo run '{...}' --trace
+
+# M7 — the offline gates CI runs: fixtures, retrieval, grounding, red team
+halo gate
+
 # what this has cost so far
 halo spend
 ```
@@ -218,6 +225,32 @@ print what to do about them rather than a stack trace.
 
 At M1 every run escalates. That is the milestone working, not failing: the draft
 is entirely invented, and design rule 02 says an uncited figure is not an answer.
+
+## What a run leaves behind
+
+Two records, with different rules, because they have different readers.
+
+A **trace** — five span kinds: `state` for a step, `model` for a call, `tool` for
+a gateway call carrying the `tool_call_id` a quote will cite, `decision` for what
+the harness concluded, and `approval` for a human opening a gate. Attributes are
+ids, counts and outcomes only. A trace is exported to a third-party backend, so
+no prompt, no excerpt and no supplier note goes in one.
+
+An **event record** — versioned and redacted when it is built, landing in
+`data/events.jsonl` locally or an S3 bucket partitioned by `kind` and date. This
+is where content goes, because it is a bucket we control and an auditor reads it
+in eleven months. The redaction patterns are the guardrail's own, so what the
+guardrail will not say is what the record will not keep.
+
+```
+state.pricing                             12.4ms
+  model.pricing.turn                       0.9ms  stop_reason=tool_use
+  tool.pim_oms.get_price                   0.4ms  tool_call_id=tc-0002 ok=True
+  model.pricing.report                     0.6ms
+  decision.pricing.verified                0.0ms  status=completed usd=0.0
+decision.margin                            0.0ms  margin_pct=25.4 gated=True
+approval.margin_exception                  0.0ms  approved_by=usr-mwes00
+```
 
 ## The rules the code enforces
 
@@ -250,5 +283,5 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
 | M4 | Guardrails and the untrusted boundary | done |
 | M5 | One principal, end to end | done |
 | M6 | Supervisor, bounded specialists, human approval | done |
-| M7 | Observability and evaluation gates | next |
-| M8 | Terraform up, Terraform down | |
+| M7 | Observability and evaluation gates | done |
+| M8 | Terraform up, Terraform down | next |
