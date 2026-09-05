@@ -1,11 +1,10 @@
 # HALO Quote Copilot
 
-A practice agentic platform on AWS Bedrock: one seller request becomes a draft
+An agentic platform on AWS Bedrock: one seller request becomes a draft
 quote where every number traces to a tool call or a cited document — or the run
 escalates and says why.
 
-**This is a learning build, not a production system.** All data is synthetic; no
-HALO systems, credentials or customer records are involved.
+**This app uses synthetic data.**
 
 Design and milestone plan: https://claude.ai/code/artifact/b3bf21a2-1e31-45c7-816b-66aa040ec8c3
 
