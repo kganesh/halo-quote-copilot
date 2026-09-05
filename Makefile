@@ -1,7 +1,7 @@
 VENV := .venv
 PY   := $(VENV)/bin/python
 
-.PHONY: install seed ingest eval test lint clean
+.PHONY: install seed ingest eval redteam test lint clean
 
 install:
 	python3 -m venv $(VENV)
@@ -17,6 +17,10 @@ ingest:
 # Live: 20 questions against Bedrock, roughly $0.15 a run.
 eval:
 	$(VENV)/bin/halo eval
+
+# Offline: 20 hostile notes through the real sourcing loop, no spend.
+redteam:
+	$(VENV)/bin/halo redteam
 
 test:
 	$(VENV)/bin/pytest -q

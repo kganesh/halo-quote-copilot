@@ -147,7 +147,8 @@ catalogue.
 ```
 src/halo/
   domain/      the synthetic HALO business: org, catalog, supply, atlas, quote, request
-  platform/    contracts every agent obeys: identity, budget, outcome, bedrock, gateway, ledger
+  platform/    contracts every agent obeys: identity, budget, outcome, bedrock,
+               gateway, ledger, envelope, guardrails
   rag/         chunk, embed, store, bm25, hybrid retrieve, ingest, evaluate
   evals/       golden sets the CLI runs
   agents/      one function per agent, each returning an Outcome
@@ -185,6 +186,9 @@ halo ask "Can we rush a five colour screen print job?"
 # M3 — the 20-question golden set (live, ~$0.15)
 halo eval
 
+# M4 — 20 hostile supplier notes through the sourcing loop (offline, free)
+halo redteam
+
 # what this has cost so far
 halo spend
 ```
@@ -211,7 +215,9 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
    whose ref resolves to a document chunk or a tool call (`domain/quote.py`).
 3. **Identity is a token that travels** — `Principal` is frozen at admission and
    enforced at the tool boundary, never by the agent (`platform/identity.py`).
-4. **Tool output is data, never instruction** — arrives at M4.
+4. **Tool output is data, never instruction** — everything fetched arrives
+   inside an evidence envelope it cannot close, and a guardrail checks both
+   surfaces (`platform/envelope.py`, `platform/guardrails.py`).
 5. **Budgets are enforced, not requested** — wall clock, tokens, tool calls and
    dollars, checked before every step (`platform/budget.py`).
 6. **Approval resumes, it doesn't restart** — arrives at M6.
@@ -224,8 +230,8 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
 | M1 | First Bedrock call — and a deliberately ungrounded quote | done |
 | M2 | The MCP tool plane | done |
 | M3 | Atlas RAG with real citations | done |
-| M4 | Guardrails and the untrusted boundary | next |
-| M5 | One principal, end to end | |
+| M4 | Guardrails and the untrusted boundary | done |
+| M5 | One principal, end to end | next |
 | M6 | Supervisor, bounded specialists, human approval | |
 | M7 | Observability and evaluation gates | |
 | M8 | Terraform up, Terraform down | |

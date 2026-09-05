@@ -28,7 +28,9 @@ from halo.domain.quote import Citation, CitationKind, DecorationCharge, Quote, Q
 from halo.domain.request import QuoteRequest
 from halo.platform.bedrock import ModelClient
 from halo.platform.budget import BudgetExceeded, BudgetTracker
+from halo.platform.envelope import EVIDENCE_RULE, Evidence, wrap
 from halo.platform.gateway import ToolCall, ToolGateway
+from halo.platform.guardrails import Guardrail, GuardrailVerdict, Surface
 from halo.platform.identity import Principal
 from halo.platform.outcome import Outcome, OutcomeStatus
 
@@ -86,7 +88,8 @@ record that in `unresolved`. Do not change the date.
 For each figure you report, give the `tool_call_id` of the call that produced it.
 Every tool result is labelled with its id. Do not guess an id. Do not reuse an id
 from a different figure. Both are checked.
-"""
+
+{evidence_rule}"""
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -369,9 +372,11 @@ async def source_quote(
     gateway: ToolGateway,
     tracker: BudgetTracker,
     today: date | None = None,
+    guardrail: Guardrail | None = None,
 ) -> Outcome:
     """Run the tool loop, verify what comes back, and assemble or escalate."""
-    system = SYSTEM_PROMPT.format(today=today or date.today())
+    quarantined: list[tuple[str, GuardrailVerdict]] = []
+    system = SYSTEM_PROMPT.format(today=today or date.today(), evidence_rule=EVIDENCE_RULE)
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": request.model_dump_json(indent=2)}
     ]
@@ -410,11 +415,21 @@ async def source_quote(
                     "tool_call_id": call.id,
                     "result" if call.ok else "error": call.result if call.ok else call.error,
                 }
+                body = json.dumps(payload, default=str)
+                # A supplier's own text reaches the model here and nowhere else.
+                # It goes in wrapped, and anything addressed to the model is
+                # recorded on the way past. The run continues: a hostile
+                # production note is not a reason to abandon a legitimate
+                # quote, it is a reason not to obey the note.
+                if guardrail is not None:
+                    verdict = guardrail.inspect(body, surface=Surface.INPUT)
+                    if verdict.categories:
+                        quarantined.append((call.id, verdict))
                 results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(payload, default=str),
+                        "content": wrap(Evidence(id=call.id, source=call.name, body=body)),
                         "is_error": not call.ok,
                     }
                 )
@@ -457,6 +472,21 @@ async def source_quote(
     decision = decision_result.parsed
     audit = gateway.audit
 
+    # What the seller would read, checked before anything is assembled. The
+    # figures are already tied to tool calls by `verify`; this catches the other
+    # half, where the prose around them promises something no tool can give.
+    if guardrail is not None:
+        verdict = guardrail.inspect(_decision_text(decision), surface=Surface.OUTPUT)
+        if verdict.blocked:
+            return Outcome(
+                status=OutcomeStatus.REFUSED,
+                agent=AGENT_NAME,
+                payload=decision.model_dump(mode="json"),
+                escalation_reason=f"the draft was blocked before assembly: {verdict.summary()}",
+                next_state="blocked_by_guardrail",
+                usage=tracker.usage,
+            )
+
     if problems := verify(decision, audit):
         return Outcome(
             status=OutcomeStatus.ESCALATED,
@@ -482,6 +512,14 @@ async def source_quote(
     quote = assemble(decision, audit)
     payload = quote.model_dump(mode="json")
     payload["open_questions"] = decision.open_questions
+    # A quote can be correct and still have been quoted at while something tried
+    # to steer it. That attempt belongs in the record either way, so that a note
+    # which got as far as the model is never invisible just because it failed.
+    if quarantined:
+        payload["quarantined"] = [
+            {"tool_call_id": call_id, "finding": verdict.summary()}
+            for call_id, verdict in quarantined
+        ]
     return Outcome(
         status=OutcomeStatus.COMPLETED,
         agent=AGENT_NAME,
@@ -489,6 +527,23 @@ async def source_quote(
         evidence=quote.all_citations,
         next_state="ready_for_margin_review",
         usage=tracker.usage,
+    )
+
+
+def _decision_text(decision: SourcingDecision) -> str:
+    """The free text a seller would read. Numbers are checked elsewhere.
+
+    `unresolved` and `open_questions` are included because they are the fields a
+    model writes sentences into, which makes them where a commitment ends up
+    when one is made at all.
+    """
+    return "\n".join(
+        [
+            decision.product_name,
+            decision.supplier_name,
+            *decision.unresolved,
+            *decision.open_questions,
+        ]
     )
 
 

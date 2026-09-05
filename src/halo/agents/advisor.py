@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 from halo.domain.quote import Citation, CitationKind
 from halo.platform.bedrock import ModelClient
 from halo.platform.budget import BudgetExceeded, BudgetTracker
+from halo.platform.envelope import EVIDENCE_RULE, Evidence, wrap_all
+from halo.platform.guardrails import Guardrail, Surface
 from halo.platform.identity import Principal
 from halo.platform.outcome import Outcome, OutcomeStatus
 from halo.rag.retrieve import AtlasRetriever, ScoredChunk
@@ -41,7 +43,8 @@ If the excerpts do not answer part of the question, put that part in
 `unsupported` and leave it out of the answer. An excerpt that is merely related
 is not an answer, and no excerpt at all is a better outcome than a plausible
 guess.
-"""
+
+{evidence_rule}"""
 
 
 class Finding(BaseModel):
@@ -84,12 +87,47 @@ def verify(answer: PolicyAnswer, retrieved: list[ScoredChunk]) -> list[str]:
     return problems
 
 
-def _prompt(question: str, retrieved: list[ScoredChunk]) -> str:
-    excerpts = "\n\n".join(
-        f"[{hit.chunk.id}] {hit.chunk.doc_title} — {hit.chunk.heading}\n{hit.chunk.text}"
-        for hit in retrieved
+def _excerpts(retrieved: list[ScoredChunk]) -> str:
+    """The retrieved chunks, each inside an evidence envelope.
+
+    An Atlas document is written by HALO, so this corpus is less hostile than a
+    supplier feed. It is wrapped anyway. The boundary is defined by where the
+    text was fetched from, not by how much we trust today's contents of the
+    place we fetched it from.
+    """
+    return wrap_all(
+        [
+            Evidence(
+                id=hit.chunk.id,
+                source=f"atlas/{hit.chunk.doc_title} — {hit.chunk.heading}",
+                body=hit.chunk.text,
+            )
+            for hit in retrieved
+        ]
     )
-    return f"QUESTION\n{question}\n\nEXCERPTS\n{excerpts}"
+
+
+def _answer_text(answer: PolicyAnswer) -> str:
+    """Everything the seller would read. The claims are included because a
+    commitment can be made in a finding as easily as in the summary."""
+    return "\n".join([answer.answer, *(finding.claim for finding in answer.findings)])
+
+
+def _prompt(question: str, retrieved: list[ScoredChunk]) -> str:
+    return f"QUESTION\n{question}\n\nEXCERPTS\n{_excerpts(retrieved)}"
+
+
+def _refusal(reason: str, usage, payload: dict | None = None) -> Outcome:
+    """A guardrail stop. `refused`, not `escalated`: there is nothing for a human
+    to approve here, and the approval queue should not fill up with attacks."""
+    return Outcome(
+        status=OutcomeStatus.REFUSED,
+        agent=AGENT_NAME,
+        payload=payload,
+        escalation_reason=reason,
+        next_state="blocked_by_guardrail",
+        usage=usage,
+    )
 
 
 def answer_policy_question(
@@ -100,8 +138,17 @@ def answer_policy_question(
     retriever: AtlasRetriever,
     tracker: BudgetTracker,
     limit: int = 6,
+    guardrail: Guardrail | None = None,
 ) -> tuple[Outcome, list[ScoredChunk]]:
     """Retrieve, answer, verify. Returns the outcome and what was retrieved."""
+    if guardrail is not None:
+        verdict = guardrail.inspect(question, surface=Surface.INPUT)
+        if verdict.blocked:
+            return (
+                _refusal(f"the question was blocked: {verdict.summary()}", tracker.usage),
+                [],
+            )
+
     retrieved = retriever.search(question, limit=limit)
 
     if not retrieved:
@@ -118,7 +165,7 @@ def answer_policy_question(
 
     try:
         result = client.parse(
-            system=SYSTEM_PROMPT,
+            system=SYSTEM_PROMPT.format(evidence_rule=EVIDENCE_RULE),
             user=_prompt(question, retrieved),
             output_format=PolicyAnswer,
         )
@@ -163,6 +210,26 @@ def answer_policy_question(
             ),
             retrieved,
         )
+
+    # The output check runs after grounding, not instead of it. A verified
+    # answer can still be one that should not be sent: the excerpts genuinely
+    # say what it quotes, and the sentence it built around them commits HALO to
+    # something. Grounded and allowed are different questions.
+    if guardrail is not None:
+        verdict = guardrail.inspect(
+            _answer_text(parsed),
+            surface=Surface.OUTPUT,
+            grounding_source=_excerpts(retrieved),
+        )
+        if verdict.blocked:
+            return (
+                _refusal(
+                    f"the answer was blocked before it reached the seller: {verdict.summary()}",
+                    tracker.usage,
+                    parsed.model_dump(mode="json"),
+                ),
+                retrieved,
+            )
 
     citations = [
         Citation(

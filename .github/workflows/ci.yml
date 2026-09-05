@@ -1,0 +1,41 @@
+# Everything here runs without an AWS account and without spending anything.
+# That is a property of the test suite, not of this file: `ModelClient`,
+# `ToolGateway` and `Guardrail` each have an in-process implementation, so the
+# only thing missing from a CI run is the network.
+#
+# The red-team suite is a separate step from the tests, although the tests cover
+# it too. A failure here should name itself in the job list rather than arriving
+# as one more red dot in a run of 217.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Red team
+        # Exits 2 if any hostile note was carried out.
+        run: halo redteam

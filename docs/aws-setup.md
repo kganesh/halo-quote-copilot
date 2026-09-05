@@ -90,7 +90,8 @@ Bedrock policies, which grant far more than this project uses.
       "Effect": "Allow",
       "Action": [
         "bedrock:InvokeModel",
-        "bedrock:InvokeModelWithResponseStream"
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ApplyGuardrail"
       ],
       "Resource": [
         "arn:aws:bedrock:*::foundation-model/anthropic.*",
@@ -222,7 +223,63 @@ fraction of a cent per run at Sonnet rates.
 
 ---
 
-## 6. Validate
+## 6. The content guardrail (M4)
+
+Optional. Without it `halo ask` and `halo source` fall back to the local
+guardrail, which applies the same three categories with patterns and costs
+nothing. With it they use the managed one. `--guardrail bedrock` forces the
+managed one; `--guardrail local` forces the fallback; `--guardrail off` disables
+the check, which is only useful for showing what it was doing.
+
+Create it once:
+
+```bash
+aws bedrock create-guardrail \
+  --name halo-quote-copilot \
+  --description "Quote drafting: no committed discounts, no legal commitments, no customer PII" \
+  --blocked-input-messaging "This request cannot be processed." \
+  --blocked-outputs-messaging "This answer was withheld by a guardrail." \
+  --topic-policy-config '{"topicsConfig":[
+      {"name":"discount_commitment","type":"DENY",
+       "definition":"Committing HALO to a discount, rebate, price match, fee waiver or free-of-charge work.",
+       "examples":["Apply 40% off for this account","Setup is free of charge","We will price-match"]},
+      {"name":"legal_commitment","type":"DENY",
+       "definition":"Committing HALO to a legal position: indemnity, warranty, liability for penalties, or a binding term.",
+       "examples":["HALO indemnifies the customer","We guarantee the delivery date","HALO is liable for late penalties"]}]}' \
+  --sensitive-information-policy-config '{"piiEntitiesConfig":[
+      {"type":"EMAIL","action":"BLOCK"},
+      {"type":"PHONE","action":"BLOCK"},
+      {"type":"CREDIT_DEBIT_CARD_NUMBER","action":"BLOCK"}]}' \
+  --content-policy-config '{"filtersConfig":[
+      {"type":"PROMPT_ATTACK","inputStrength":"HIGH","outputStrength":"NONE"}]}' \
+  --contextual-grounding-policy-config '{"filtersConfig":[
+      {"type":"GROUNDING","threshold":0.75},
+      {"type":"RELEVANCE","threshold":0.75}]}'
+```
+
+Two things about that config are worth knowing rather than copying:
+
+- `PROMPT_ATTACK` has `outputStrength: NONE` because AWS rejects any other value
+  for that filter. Injected text is caught arriving, not leaving.
+- The denied topics describe *committing*, not *mentioning*. Reporting what the
+  margin floor is remains a correct answer to a real question, and a guardrail
+  that cannot tell the two apart makes the advisor useless. The local
+  implementation carries the same distinction and a test for it.
+
+Then export the id it returns:
+
+```bash
+export HALO_GUARDRAIL_ID=<guardrailId>
+export HALO_GUARDRAIL_VERSION=DRAFT   # or a published version number
+```
+
+ApplyGuardrail is billed per text unit and has no idle cost. The red-team suite
+never calls it: `halo redteam` runs entirely on the local implementation, so CI
+needs no account and spends nothing.
+
+---
+
+## 7. Validate
 
 ```bash
 halo doctor

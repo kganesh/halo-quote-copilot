@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from decimal import Decimal
 
@@ -26,6 +27,7 @@ from halo.platform import ledger
 from halo.platform.bedrock import DEFAULT_MODEL, DEFAULT_REGION, BedrockClient
 from halo.platform.budget import Budget, BudgetTracker
 from halo.platform.gateway import McpGateway, ToolSpec
+from halo.platform.guardrails import BedrockGuardrail, Guardrail, LocalGuardrail
 from halo.platform.identity import Principal, Role
 from halo.platform.outcome import Outcome, OutcomeStatus
 from halo.rag.embed import TitanEmbedder
@@ -271,6 +273,30 @@ def render_sourced(outcome: Outcome, audit: list) -> str:
     return "\n".join(lines)
 
 
+def _add_guardrail_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--guardrail",
+        choices=("auto", "local", "bedrock", "off"),
+        default="auto",
+        help="auto uses Bedrock when HALO_GUARDRAIL_ID is set, otherwise local",
+    )
+
+
+def _guardrail(args) -> Guardrail | None:
+    """Which guardrail this run uses.
+
+    `auto` is the default and prefers the managed one when the account has it:
+    a local pattern set is a floor, and running on it while a real guardrail is
+    configured would be choosing the weaker check silently.
+    """
+    choice = getattr(args, "guardrail", "auto")
+    if choice == "off":
+        return None
+    if choice == "bedrock" or (choice == "auto" and os.environ.get("HALO_GUARDRAIL_ID")):
+        return BedrockGuardrail(region=args.region)
+    return LocalGuardrail()
+
+
 async def _source(args, client_factory) -> tuple[Outcome, list]:
     tracker = BudgetTracker(SOURCING_BUDGET)
     client = client_factory(region=args.region, model=args.model, tracker=tracker)
@@ -282,6 +308,7 @@ async def _source(args, client_factory) -> tuple[Outcome, list]:
             client=client,
             gateway=gateway,
             tracker=tracker,
+            guardrail=_guardrail(args),
         )
         return outcome, gateway.audit
 
@@ -304,6 +331,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     ask.add_argument("--model", default=DEFAULT_MODEL)
     ask.add_argument("--limit", type=int, default=6, help="excerpts to supply")
     ask.add_argument("--json", action="store_true")
+    _add_guardrail_flag(ask)
 
     evaluate = sub.add_parser("eval", help="run the Atlas golden set")
     evaluate.add_argument("--region", default=DEFAULT_REGION)
@@ -315,6 +343,16 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     source.add_argument("--region", default=DEFAULT_REGION)
     source.add_argument("--model", default=DEFAULT_MODEL)
     source.add_argument("--json", action="store_true")
+    _add_guardrail_flag(source)
+
+    redteam = sub.add_parser("redteam", help="run the hostile-note suite against the sourcing loop")
+    redteam.add_argument(
+        "--live",
+        action="store_true",
+        help="run against Bedrock instead of the control model (costs money)",
+    )
+    redteam.add_argument("--region", default=DEFAULT_REGION)
+    redteam.add_argument("--model", default=DEFAULT_MODEL)
 
     quote = sub.add_parser("quote", help="draft a quote from a seller's sentence")
     quote.add_argument("request", help="what the customer asked for, in plain English")
@@ -378,6 +416,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
                 retriever=_retriever(args.region),
                 tracker=tracker,
                 limit=args.limit,
+                guardrail=_guardrail(args),
             )
         except SetupError as error:
             print(str(error), file=sys.stderr)
@@ -414,6 +453,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
                 retriever=_retriever(args.region),
                 tracker=tracker,
                 limit=args.limit,
+                guardrail=_guardrail(args),
             )
         except SetupError as error:
             print(str(error), file=sys.stderr)
@@ -442,6 +482,24 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
             f"   ${tracker.usage.usd:.4f}"
         )
         return 0 if stats["grounded"] == stats["total"] else 2
+
+    if args.command == "redteam":
+        from halo.evals.redteam import report, run_offline
+
+        if args.live:
+            print(
+                "Live red-teaming is not wired up yet. The offline suite runs the "
+                "same notes through the same loop against a model that obeys every "
+                "one of them, which is the stronger test of the harness.",
+                file=sys.stderr,
+            )
+            return 1
+
+        results = asyncio.run(run_offline())
+        print(report(results))
+        # Non-zero when anything got through, so CI fails on a regression rather
+        # than printing a table nobody reads.
+        return 0 if all(result.passed for result in results) else 2
 
     if args.command == "source":
         try:
