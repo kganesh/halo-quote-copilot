@@ -1,4 +1,4 @@
-# AWS setup for M1
+# AWS setup
 
 What has to exist before `halo quote "..."` makes a real call, in the order it
 has to exist. Roughly fifteen minutes, and the finished setup costs nothing while
@@ -6,6 +6,22 @@ idle — Bedrock on-demand bills per token, with no standing charge.
 
 Run `halo doctor` at any point. It checks each of these in order and stops at the
 first thing that is missing, so you can work down the list rather than guess.
+
+**Sections 1–4 are the only ones you have to do by hand.** An account, an
+identity, a region and model access are prerequisites nothing can provision for
+you. Everything from section 5 onward — the budget, the content guardrail, the
+Cognito pool, the evidence bucket, the log group and the access policy — is what
+`terraform apply` creates in one step:
+
+```bash
+cd infra/terraform && terraform init && terraform apply
+eval "$(terraform output -json environment | jq -r 'to_entries[] | "export \(.key)=\(.value)"')"
+```
+
+The manual steps are kept because doing a thing once by hand is how you learn
+what the module is doing, and because a console click is easier to undo than a
+half-applied stack. See [infra/terraform/README.md](../infra/terraform/README.md)
+for what the stack contains and what it deliberately leaves out.
 
 ---
 
@@ -92,7 +108,8 @@ Bedrock policies, which grant far more than this project uses.
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream",
         "bedrock:ApplyGuardrail",
-        "s3:PutObject"
+        "s3:PutObject",
+        "ce:GetCostAndUsage"
       ],
       "Resource": [
         "arn:aws:bedrock:*::foundation-model/anthropic.*",
@@ -420,6 +437,47 @@ Expect exit code **2** and an escalation. That is M1 working. The draft will loo
 entirely credible and every figure in it is invented — which is the baseline M2
 and M3 are measured against.
 
+Then, in rising cost:
+
+```bash
+make ingest                          # embeds 25 Atlas docs, ~$0.0001 — needed by ask and eval
+halo ask "Can we rush a five colour screen print job?"     # ~$0.006
+halo eval                            # the 20-question golden set, ~$0.17
+```
+
+---
+
+## 10. Tearing it down
+
+The last step of the setup, written down here because a guide that only explains
+how to start costs money for as long as someone follows it.
+
+```bash
+cd infra/terraform && terraform destroy
+halo teardown --live
+```
+
+`halo teardown` on its own reads the configuration and fails on anything that
+would survive a destroy — a bucket without `force_destroy`, a log group with no
+retention, any resource that bills while idle. It needs no credentials and runs
+in CI on every push.
+
+`--live` asks Cost Explorer what the account was actually charged. Three things
+about that:
+
+- **Cost Explorer has to be enabled**, and enabling it takes up to 24 hours to
+  return data the first time. Turn it on when you create the account, not on the
+  day you want the answer.
+- **It lags.** A destroy this morning is not visible until tomorrow, which is why
+  the command reads two days back by default. A report run immediately after a
+  teardown says zero and means nothing.
+- **It is the authority, not Terraform state.** What bills after a teardown is by
+  definition what Terraform did not create: a log group a service made on first
+  use, an EBS snapshot, an Elastic IP allocated by hand during a demo.
+
+What is left behind on purpose: the IAM user from section 1, the account budget
+from section 5, and Cost Explorer itself. None of them bills anything.
+
 ---
 
 ## Troubleshooting
@@ -456,8 +514,15 @@ Three things that came out of reading it:
   practice data and worth a second thought for anything real. This project
   defaults to `global.`.
 - A **cached input token costs a tenth of a fresh one** ($0.33 against $3.30).
-  A tool loop resends its transcript every turn, so prompt caching is the lever
-  when sourcing runs get expensive.
+  A tool loop resends its transcript every turn, so prompt caching is the obvious
+  lever when sourcing runs get expensive.
+
+  Measured, it is not doing anything yet. The system prompt is sent with a cache
+  breakpoint and Bedrock accepts it, but a live golden-set run returns zero cache
+  reads: these prefixes are shorter than the model's minimum cacheable length, so
+  there is nothing to serve from cache. `halo spend` grows two cache columns the
+  moment that changes, and until it does, the accounting is in place and the
+  saving is not.
 
 ## Why a model can be authorized and still refused
 
