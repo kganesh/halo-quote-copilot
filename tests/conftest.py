@@ -28,6 +28,25 @@ def pytest_sessionstart(session):
         )
 
 
+@pytest.fixture(autouse=True)
+def _writes_nowhere_real(tmp_path, monkeypatch):
+    """Point every durable write at a temp directory.
+
+    The suite runs the CLI end to end, and the CLI records what it spent. With
+    the real paths in place, 148 of the 152 `quote` rows in `data/spend.jsonl`
+    were tests recording $0.00 through a fake model — enough noise that the
+    average cost of a real draft read as a tenth of a cent.
+
+    A ledger is cost accounting. Test runs in it are not a tidiness problem,
+    they are wrong numbers in the one place the project keeps its numbers.
+    """
+    from halo.platform import checkpoint, events, ledger
+
+    monkeypatch.setattr(ledger, "LEDGER_PATH", tmp_path / "spend.jsonl")
+    monkeypatch.setattr(events, "EVENTS_PATH", tmp_path / "events.jsonl")
+    monkeypatch.setattr(checkpoint, "CHECKPOINT_DIR", tmp_path / "checkpoints")
+
+
 @pytest.fixture(scope="session")
 def corpus(tmp_path_factory) -> Path:
     """One generated corpus for the whole session, in a temp directory."""

@@ -189,13 +189,22 @@ flowchart LR
     class LIM,EST check
 ```
 
-| Operation | Model calls | Cost | Dominated by |
-|---|---|---|---|
-| Atlas ingest | 80 embeds | $0.0001 | Titan at $0.02 per million tokens |
-| Policy question | 1 | $0.006 | six excerpts of context |
-| Ungrounded draft (M1) | 1 | $0.05 | long output, many assumptions |
-| Golden set, 20 questions | 20 | $0.14 | volume |
-| Sourced quote | 5–13 | $0.15 | the loop resends the transcript each turn |
+Measured from the ledger, counting only runs that actually reached Bedrock:
+
+| Operation | Model calls | Cost | Runs | Dominated by |
+|---|---|---|---|---|
+| Atlas ingest | 80 embeds | $0.0001 | 1 | Titan at $0.02 per million tokens |
+| Policy question `ask` | 1 | $0.0058 | 4 | six excerpts of context |
+| Ungrounded draft `quote` | 1 | $0.0436 | 4 | long output, many assumptions |
+| Golden set `eval` | 20 | $0.1693 | 3 | volume |
+| Sourced quote `source` | 5–13 | $0.1718 | 11 | the loop resends the transcript each turn |
+
+The last two are higher than the figures this project started with — $0.14 and
+$0.15 — and the difference is not drift. Every system prompt has carried the
+evidence rule since M4, on every call of every turn, which is a safety feature
+with a price per token. `source` also has the widest spread of anything here,
+$0.0992 to $0.2788, because the number of turns depends on how quickly the model
+settles on a supplier.
 
 **Cache tokens are added, not assumed included.** The API reports cache reads and
 writes as counts separate from `input_tokens`. Reading only `input_tokens` prices
@@ -205,6 +214,14 @@ has already exceeded.
 **Rates come from the account's own card, not the first-party price list.** The
 two differ by about 10%, and the first-party figures under-reported this
 project's spend.
+
+**Caching is wired up and currently saves nothing.** The system prompt is sent
+with a cache breakpoint and Bedrock accepts it, but a live golden-set run comes
+back with zero cache reads: these prefixes are shorter than the model's minimum
+cacheable length, so there is nothing to serve. `halo spend` grows two cache
+columns the moment that changes. The accounting is in place; the saving is not,
+and calling it the fix for expensive sourcing runs would be describing an
+intention as a result.
 
 **A model with no rate card entry cannot be used.** `BedrockClient` refuses to be
 constructed for one: an unpriced call adds zero to `usage.usd`, so `max_usd` is
