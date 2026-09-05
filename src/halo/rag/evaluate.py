@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from halo.agents.advisor import PolicyAnswer, answer_policy_question
 from halo.platform.bedrock import ModelClient
 from halo.platform.budget import BudgetTracker
+from halo.platform.guardrails import Guardrail
 from halo.platform.identity import Principal
 from halo.platform.outcome import OutcomeStatus
 from halo.rag.retrieve import AtlasRetriever
@@ -44,7 +45,15 @@ def run_golden(
     retriever: AtlasRetriever,
     tracker: BudgetTracker,
     limit: int = 6,
+    guardrail: Guardrail | None = None,
 ) -> list[GoldenResult]:
+    """Run the set the way `halo ask` runs, guardrail included.
+
+    Evaluating without the guardrail would measure a path that does not ship. If
+    it blocks a golden answer that is a finding worth seeing, not noise: it means
+    the guardrail is refusing a legitimate policy answer, which is the
+    false-positive this project has a test class about.
+    """
     results: list[GoldenResult] = []
 
     for case in golden:
@@ -55,6 +64,7 @@ def run_golden(
             retriever=retriever,
             tracker=tracker,
             limit=limit,
+            guardrail=guardrail,
         )
         was_retrieved = any(hit.chunk.id == case.expect_chunk for hit in retrieved)
 

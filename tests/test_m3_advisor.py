@@ -232,3 +232,91 @@ class TestAnswerFlow:
 
         assert outcome.status is OutcomeStatus.ESCALATED
         assert client.calls == [], "the model was asked about an empty corpus"
+
+
+class TestTheGoldenRunner:
+    """`halo eval` is the one command no offline test could run end to end — it
+    needs Bedrock and the Atlas index — so nothing checked that the CLI's call
+    matched this function's signature. It did not, from M4 until a live run
+    failed on it: adding the guardrail flag to `ask` also rewrote the call to
+    `run_golden`, which had no such parameter.
+
+    These do not need a network. They check the seam that broke.
+    """
+
+    class StubRetriever:
+        def __init__(self, hits):
+            self._hits = hits
+
+        def search(self, query, limit=5, pool=15):
+            return self._hits
+
+    def a_run(self, guardrail=None):
+        from halo.evals.atlas_golden import GoldenQuestion
+        from halo.rag.evaluate import run_golden
+
+        return run_golden(
+            [
+                GoldenQuestion(
+                    "What's the most colours we can screen print in one spot?",
+                    "atl-screen-print-standards#colour-limits",
+                    "six spot colours",
+                )
+            ],
+            principal=Principal(
+                user_id="usr-mwes01",
+                tenant_id="tnt-mwest1",
+                role=Role.SELLER,
+                account_ids=("acct-mwes02",),
+            ),
+            client=FakeModelClient(an_answer()),
+            retriever=self.StubRetriever([a_hit()]),
+            tracker=BudgetTracker(
+                Budget(
+                    wall_clock_seconds=60,
+                    max_tokens=100_000,
+                    max_tool_calls=0,
+                    max_usd=Decimal("1.00"),
+                )
+            ),
+            guardrail=guardrail,
+        )
+
+    def test_a_grounded_answer_passes_all_three_rates(self):
+        result = self.a_run()[0]
+
+        assert result.retrieved and result.cited and result.fact_in_quote
+        assert result.passed
+
+    def test_it_accepts_the_guardrail_the_cli_passes_it(self):
+        """The exact signature mismatch that broke `halo eval` for four
+        milestones. `ask` runs with a guardrail, so an eval that could not take
+        one would measure a path that does not ship."""
+        from halo.platform.guardrails import LocalGuardrail
+
+        assert self.a_run(guardrail=LocalGuardrail())[0].passed
+
+    def test_the_cli_calls_it_with_arguments_it_accepts(self):
+        """Cheap insurance against the next one. Every keyword the CLI passes
+        has to exist here, and no live call is needed to know that."""
+        import ast
+        import inspect
+        from pathlib import Path
+
+        from halo.rag.evaluate import run_golden
+
+        source = Path(inspect.getfile(run_golden)).parent.parent / "cli.py"
+        tree = ast.parse(source.read_text())
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "run_golden"
+        ]
+
+        assert calls, "the CLI no longer calls run_golden"
+        accepted = set(inspect.signature(run_golden).parameters)
+        for call in calls:
+            passed = {keyword.arg for keyword in call.keywords if keyword.arg}
+            assert passed <= accepted, f"cli passes {passed - accepted}, which run_golden rejects"

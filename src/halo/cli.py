@@ -414,6 +414,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     evaluate.add_argument("--region", default=DEFAULT_REGION)
     evaluate.add_argument("--model", default=DEFAULT_MODEL)
     evaluate.add_argument("--limit", type=int, default=6)
+    _add_guardrail_flag(evaluate)
 
     source = sub.add_parser("source", help="source a quote from the MCP tool plane")
     source.add_argument("request_json", help="a QuoteRequest as JSON")
