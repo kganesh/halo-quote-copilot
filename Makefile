@@ -24,7 +24,7 @@ redteam:
 
 # Offline: the evaluation gates CI runs — fixtures, retrieval, grounding, red
 # team, teardown.
-gate:
+gate: seed
 	$(VENV)/bin/halo gate
 
 # Live: stands the stack up. Nothing in it bills while idle; see infra/terraform.
@@ -36,7 +36,9 @@ down:
 	cd infra/terraform && terraform destroy
 	$(PY) -m halo.cli teardown --live
 
-test:
+# Depends on seed: the tool servers have no system of record without it, and a
+# suite that fails for that reason tells you about everything except that reason.
+test: seed
 	$(VENV)/bin/pytest -q
 
 lint:
