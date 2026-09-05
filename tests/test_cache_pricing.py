@@ -149,3 +149,35 @@ def test_token_counts_sum_every_category():
         cache_write_1h_tokens=50,
     )
     assert counts.total_tokens == 150
+
+
+class TestTheCacheBreakpoint:
+    """M6 sends the system prompt as a cacheable block.
+
+    Only the shape can be checked here. Whether Bedrock served a cached read is
+    visible in `usage.cache_read_input_tokens` on a live call, which is what
+    `Usage.cache_hit_rate` exists to surface.
+    """
+
+    def test_the_system_prompt_carries_a_breakpoint(self):
+        from halo.platform.bedrock import system_blocks
+
+        blocks = system_blocks("You price one product.")
+        assert blocks == [
+            {
+                "type": "text",
+                "text": "You price one product.",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+
+    def test_the_breakpoint_is_on_the_prefix_and_not_the_messages(self):
+        """A breakpoint inside a growing transcript is invalidated by the growth,
+        which is the usual way a cache hit rate stays at zero."""
+        import inspect
+
+        from halo.platform.bedrock import BedrockClient
+
+        source = inspect.getsource(BedrockClient)
+        assert "system=system_blocks(system)" in source
+        assert "cache_control" not in source.split("def converse")[1]

@@ -19,6 +19,8 @@ import anthropic
 from halo.agents.advisor import PolicyAnswer, answer_policy_question
 from halo.agents.drafter import draft_quote
 from halo.agents.sourcing import source_quote
+from halo.agents.supervisor import draft as supervise
+from halo.agents.supervisor import resume as resume_run
 from halo.doctor import render as doctor_render
 from halo.doctor import run as doctor_run
 from halo.domain.quote import Quote
@@ -28,6 +30,7 @@ from halo.platform import ledger
 from halo.platform.admission import AdmissionError, principal_from_claims
 from halo.platform.bedrock import DEFAULT_MODEL, DEFAULT_REGION, BedrockClient
 from halo.platform.budget import Budget, BudgetTracker
+from halo.platform.checkpoint import ApprovalError, FileCheckpointStore, approve
 from halo.platform.gateway import McpGateway, ToolSpec
 from halo.platform.guardrails import BedrockGuardrail, Guardrail, LocalGuardrail
 from halo.platform.identity import Principal
@@ -339,6 +342,23 @@ def _guardrail(args) -> Guardrail | None:
     return LocalGuardrail()
 
 
+async def _run(args, client_factory, principal: Principal):
+    """M6: the supervisor, over the same gateway the single loop used."""
+    tracker = BudgetTracker(SOURCING_BUDGET)
+    client = client_factory(region=args.region, model=args.model, tracker=tracker)
+    request = QuoteRequest.model_validate_json(args.request_json)
+    async with McpGateway(SERVERS, CATALOG, tracker=tracker, principal=principal) as gateway:
+        outcome = await supervise(
+            request,
+            principal=principal,
+            client=client,
+            gateway=gateway,
+            guardrail=_guardrail(args),
+            retriever=_retriever(args.region) if args.policy else None,
+        )
+        return outcome, gateway.audit
+
+
 async def _account(args, principal: Principal):
     """One scoped tool call, made as this principal."""
     async with McpGateway(SERVERS, CATALOG, principal=principal) as gateway:
@@ -407,6 +427,27 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     )
     redteam.add_argument("--region", default=DEFAULT_REGION)
     redteam.add_argument("--model", default=DEFAULT_MODEL)
+
+    run_ = sub.add_parser("run", help="draft a quote through the supervisor and specialists")
+    run_.add_argument("request_json", help="a QuoteRequest as JSON")
+    run_.add_argument("--region", default=DEFAULT_REGION)
+    run_.add_argument("--model", default=DEFAULT_MODEL)
+    run_.add_argument("--json", action="store_true")
+    run_.add_argument(
+        "--policy",
+        action="store_true",
+        help="also run the policy specialist over Atlas (needs `make ingest`)",
+    )
+    _add_guardrail_flag(run_)
+    _add_identity_flags(run_)
+
+    pending = sub.add_parser("pending", help="quotes waiting for a margin approval")
+    _add_identity_flags(pending)
+
+    approve_ = sub.add_parser("approve", help="release a checkpoint and finish the quote")
+    approve_.add_argument("checkpoint_id")
+    approve_.add_argument("--json", action="store_true")
+    _add_identity_flags(approve_)
 
     account = sub.add_parser("account", help="read a customer account as this principal")
     account.add_argument("account_id", nargs="?", help="omit to list the accounts in scope")
@@ -559,6 +600,49 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
             return 0
         print(f"{call.name} [{call.id}] {call.error}", file=sys.stderr)
         return 2
+
+    if args.command == "run":
+        try:
+            outcome, audit = asyncio.run(_run(args, client_factory, principal))
+        except (anthropic.APIError, RuntimeError) as error:
+            print(explain(error, region=args.region, model=args.model), file=sys.stderr)
+            return 1
+        ledger.record("run", args.model, outcome.usage)
+        if args.json:
+            print(json.dumps(outcome.model_dump(mode="json"), indent=2))
+        else:
+            print(render_sourced(outcome, audit))
+        return 0 if outcome.status is OutcomeStatus.COMPLETED else 2
+
+    if args.command == "pending":
+        checkpoints = FileCheckpointStore().open_checkpoints()
+        if not checkpoints:
+            print("Nothing waiting for approval.")
+            return 0
+        for checkpoint in checkpoints:
+            owner = checkpoint.owner()
+            print(f"{checkpoint.id}  {checkpoint.created_at}  {owner.user_id}  {checkpoint.reason}")
+        return 0
+
+    if args.command == "approve":
+        store = FileCheckpointStore()
+        try:
+            released = approve(store.load(args.checkpoint_id), principal)
+        except ApprovalError as error:
+            print(f"not approved: {error}", file=sys.stderr)
+            return 1
+        store.save(released)
+
+        # No client and no gateway: the quote is assembled from the evidence the
+        # paused run already gathered. Re-running it would produce a different
+        # quote from the one that was approved.
+        outcome = resume_run(released)
+        if args.json:
+            print(json.dumps(outcome.model_dump(mode="json"), indent=2))
+        else:
+            print(f"approved {released.id} by {principal.user_id}")
+            print(render_sourced(outcome, []))
+        return 0 if outcome.status is OutcomeStatus.COMPLETED else 2
 
     if args.command == "redteam":
         from halo.evals.redteam import report, run_offline

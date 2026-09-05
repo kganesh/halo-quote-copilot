@@ -212,6 +212,8 @@ class ModelResult[T: BaseModel]:
     usd: Decimal
     model: str
     stop_reason: str | None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -228,6 +230,8 @@ class ModelTurn:
     input_tokens: int
     output_tokens: int
     usd: Decimal
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
     @property
     def tool_uses(self) -> list[Any]:
@@ -238,6 +242,28 @@ class ModelTurn:
         return "\n".join(
             block.text for block in self.content if getattr(block, "type", None) == "text"
         )
+
+
+def system_blocks(system: str) -> list[dict[str, Any]]:
+    """The system prompt as one cacheable block.
+
+    M6 runs four loops per request, and each loop resends its system prompt on
+    every turn. That prefix is identical across turns and across specialists of
+    the same kind, which is exactly the shape prompt caching is for: a cached
+    input token costs a tenth of a fresh one.
+
+    The breakpoint goes here and not on the messages, because the messages grow
+    every turn and a breakpoint inside them would be invalidated by the growth.
+    Anything volatile — today's date, the brief — stays after it.
+
+    Two honest caveats. The minimum cacheable prefix is model-dependent and these
+    prompts are shorter than it today, so `cache_read_input_tokens` will stay at
+    zero until they grow; the accounting for it exists either way, and
+    `Usage.cache_hit_rate` is the number to watch. And nothing in the offline
+    suite can prove Bedrock accepted the breakpoint: the tests assert the shape
+    of the request, and only a live run shows a cache read.
+    """
+    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
 
 class ModelClient(Protocol):
@@ -311,7 +337,7 @@ class BedrockClient:
         response = self._client.messages.parse(
             model=self.model,
             max_tokens=max_tokens,
-            system=system,
+            system=system_blocks(system),
             messages=[{"role": "user", "content": user}],
             output_format=output_format,
             thinking={"type": "adaptive"},
@@ -335,6 +361,8 @@ class BedrockClient:
             usd=usd,
             model=self.model,
             stop_reason=response.stop_reason,
+            cache_read_tokens=counts.cache_read_tokens,
+            cache_write_tokens=counts.cache_write_tokens,
         )
 
     def converse(
@@ -357,7 +385,7 @@ class BedrockClient:
         response = self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
-            system=system,
+            system=system_blocks(system),
             messages=messages,
             tools=tools,
             thinking={"type": "adaptive"},
@@ -380,4 +408,6 @@ class BedrockClient:
             input_tokens=counts.input_tokens,
             output_tokens=counts.output_tokens,
             usd=usd,
+            cache_read_tokens=counts.cache_read_tokens,
+            cache_write_tokens=counts.cache_write_tokens,
         )

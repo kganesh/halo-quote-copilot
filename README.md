@@ -148,10 +148,11 @@ catalogue.
 src/halo/
   domain/      the synthetic HALO business: org, catalog, supply, atlas, quote, request
   platform/    contracts every agent obeys: identity, admission, budget, outcome,
-               bedrock, gateway, ledger, envelope, guardrails
+               bedrock, gateway, ledger, envelope, guardrails, checkpoint
   rag/         chunk, embed, store, bm25, hybrid retrieve, ingest, evaluate
   evals/       golden sets the CLI runs
-  agents/      one function per agent, each returning an Outcome
+  agents/      one function per agent, each returning an Outcome; M6 adds the
+               supervisor, the shared bounded loop and the four specialists
   seed/        deterministic corpus generator + the written Atlas corpus
   cli.py       `halo quote "..."`
 tests/         schema, invariant, determinism, contract and agent tests
@@ -193,6 +194,13 @@ halo redteam
 halo account acct-mwes02
 halo account acct-mwes00
 
+# M6 — supervisor and four bounded specialists; a thin margin pauses for approval
+halo run '{"account_id":"acct-mwes02","product_description":"duffel bags",
+           "quantity":500,"decoration_method":"screen_print","imprint_colors":3,
+           "ship_to_state":"IL"}'
+halo pending
+halo approve chk-xxxxxxxxxx --claims "$MANAGER_CLAIMS"
+
 # what this has cost so far
 halo spend
 ```
@@ -226,7 +234,10 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
    surfaces (`platform/envelope.py`, `platform/guardrails.py`).
 5. **Budgets are enforced, not requested** — wall clock, tokens, tool calls and
    dollars, checked before every step (`platform/budget.py`).
-6. **Approval resumes, it doesn't restart** — arrives at M6.
+6. **Approval resumes, it doesn't restart** — a margin under the floor
+   checkpoints its evidence and notifies; approving assembles the quote from
+   what was already gathered, with no model call and no tool call
+   (`platform/checkpoint.py`, `agents/supervisor.py`).
 
 ## Milestones
 
@@ -238,6 +249,6 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
 | M3 | Atlas RAG with real citations | done |
 | M4 | Guardrails and the untrusted boundary | done |
 | M5 | One principal, end to end | done |
-| M6 | Supervisor, bounded specialists, human approval | next |
-| M7 | Observability and evaluation gates | |
+| M6 | Supervisor, bounded specialists, human approval | done |
+| M7 | Observability and evaluation gates | next |
 | M8 | Terraform up, Terraform down | |

@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from halo.agents.provenance import FigureCheck, SourcedFigure, verify_figures
 from halo.domain.catalog import DecorationMethod
 from halo.domain.quote import Citation, CitationKind, DecorationCharge, Quote, QuoteLine
 from halo.domain.request import QuoteRequest
@@ -213,13 +214,6 @@ TOOL_ROUTES = {
 }
 
 
-class SourcedFigure(BaseModel):
-    """A number and the call it came from. Both parts are checked."""
-
-    value: Decimal
-    tool_call_id: str = Field(pattern=r"^tc-\d{4}$")
-
-
 class SourcingDecision(BaseModel):
     """What the model decided, with a source for every figure."""
 
@@ -249,96 +243,47 @@ class SourcingDecision(BaseModel):
     practice."""
 
 
-def _values_under(result: Any, hints: tuple[str, ...]) -> set[str]:
-    """Values stored under a key whose name matches one of `hints`.
-
-    The first version searched every value in the result. That was too loose.
-    `estimate_freight` returns `{"freight_cost": "294.00", "zone": 2}`. A
-    fabricated freight cost of $2.00 matched the zone number and passed
-    verification. Searching only fields with a matching name fixes this. It also
-    makes "no field here could hold this figure" a distinct result.
-    """
-    found: set[str] = set()
-    if isinstance(result, dict):
-        for key, value in result.items():
-            if any(hint in key.lower() for hint in hints):
-                found |= _scalars(value)
-            else:
-                found |= _values_under(value, hints)
-    elif isinstance(result, list):
-        for item in result:
-            found |= _values_under(item, hints)
-    return found
-
-
-def _scalars(value: Any) -> set[str]:
-    if isinstance(value, dict):
-        return {s for v in value.values() for s in _scalars(v)}
-    if isinstance(value, list):
-        return {s for item in value for s in _scalars(item)}
-    return {str(value)}
-
-
-def _matches(value: Decimal | date, result: Any, hints: tuple[str, ...]) -> bool:
-    candidates = _values_under(result, hints)
-    if not candidates:
-        return False
-    if isinstance(value, date):
-        return value.isoformat() in candidates
-    for candidate in candidates:
-        try:
-            if Decimal(candidate) == value:
-                return True
-        except (InvalidOperation, ValueError):
-            continue
-    return False
-
-
 def verify(decision: SourcingDecision, audit: list[ToolCall]) -> list[str]:
-    """Problems with the decision's provenance. Empty means every figure checks out."""
-    by_id = {call.id: call for call in audit}
-    problems: list[str] = []
+    """Problems with the decision's provenance. Empty means every figure checks out.
 
-    # Each figure names the field it could legitimately have come from. Without
-    # this, any number in the result would match. See `_values_under`.
-    checks: list[tuple[str, Decimal | date, str, tuple[str, ...]]] = [
-        ("unit_price", decision.unit_price.value, decision.unit_price.tool_call_id, ("price",)),
-        (
-            "decoration_setup_fee",
-            decision.decoration_setup_fee.value,
-            decision.decoration_setup_fee.tool_call_id,
-            ("setup",),
-        ),
-        (
-            "decoration_run_charge_per_unit",
-            decision.decoration_run_charge_per_unit.value,
-            decision.decoration_run_charge_per_unit.tool_call_id,
-            ("run_charge",),
-        ),
-        (
-            "freight_cost",
-            decision.freight_cost.value,
-            decision.freight_cost.tool_call_id,
-            ("freight", "cost"),
-        ),
-        (
-            "promised_ship_date",
-            decision.promised_ship_date,
-            decision.ship_date_tool_call_id,
-            ("date",),
-        ),
-    ]
-
-    for field_name, value, call_id, hints in checks:
-        call = by_id.get(call_id)
-        if call is None:
-            problems.append(f"{field_name} cites {call_id}, which is not in the audit")
-        elif not call.ok:
-            problems.append(f"{field_name} cites {call_id}, which failed: {call.error}")
-        elif not _matches(value, call.result, hints):
-            problems.append(f"{field_name}={value} does not appear in {call_id} ({call.name})")
-
-    return problems
+    Each figure names the field it could legitimately have come from. Without
+    this, any number in the result would match. See `provenance.values_under`.
+    """
+    return verify_figures(
+        [
+            FigureCheck(
+                "unit_price",
+                decision.unit_price.value,
+                decision.unit_price.tool_call_id,
+                ("price",),
+            ),
+            FigureCheck(
+                "decoration_setup_fee",
+                decision.decoration_setup_fee.value,
+                decision.decoration_setup_fee.tool_call_id,
+                ("setup",),
+            ),
+            FigureCheck(
+                "decoration_run_charge_per_unit",
+                decision.decoration_run_charge_per_unit.value,
+                decision.decoration_run_charge_per_unit.tool_call_id,
+                ("run_charge",),
+            ),
+            FigureCheck(
+                "freight_cost",
+                decision.freight_cost.value,
+                decision.freight_cost.tool_call_id,
+                ("freight", "cost"),
+            ),
+            FigureCheck(
+                "promised_ship_date",
+                decision.promised_ship_date,
+                decision.ship_date_tool_call_id,
+                ("date",),
+            ),
+        ],
+        audit,
+    )
 
 
 def _citation(field_name: str, call_id: str, audit: list[ToolCall]) -> Citation:

@@ -87,6 +87,12 @@ CATEGORY_SIZES: dict[ProductCategory, list[str]] = {
 # These floors and targets must match atl-margin-floors. If they do not,
 # retrieval will cite a document that contradicts the tool. Defining them in one
 # place prevents that.
+STANDARD_MARKUPS = (Decimal("2.05"), Decimal("1.85"), Decimal("1.70"), Decimal("1.58"))
+"""Multiples of base cost at each quantity break. 1.58 is a 36.7% margin."""
+
+COMPETITIVE_MARKUPS = (Decimal("1.95"), Decimal("1.72"), Decimal("1.48"), Decimal("1.34"))
+"""The volume-priced ladder. 1.34 is a 25.4% margin, under every category floor."""
+
 MARGIN_FLOORS: dict[ProductCategory, tuple[str, str]] = {
     ProductCategory.OUTERWEAR: ("32.0", "38.0"),
     ProductCategory.KNITS: ("30.0", "36.0"),
@@ -309,9 +315,17 @@ def build_catalog(rng: random.Random) -> tuple[list[Product], list[PriceTier]]:
                 )
             )
             # Four quantity breaks. Each has a lower markup than the one before.
+            #
+            # Every twenty-fifth SKU is priced to win volume instead, and its
+            # deepest break falls below the category floor. Without a few of
+            # these the corpus cannot produce a quote that needs approval: one
+            # markup ladder for every product means every quote clears its floor
+            # by construction, and M6's gate would be unreachable code with a
+            # test that could only reach it through a stub.
+            markups = COMPETITIVE_MARKUPS if n % 25 == 7 else STANDARD_MARKUPS
             for (lo, hi), markup in zip(
                 [(1, 99), (100, 249), (250, 499), (500, None)],
-                [Decimal("2.05"), Decimal("1.85"), Decimal("1.70"), Decimal("1.58")],
+                markups,
                 strict=True,
             ):
                 tiers.append(
