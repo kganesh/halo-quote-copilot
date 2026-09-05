@@ -155,9 +155,11 @@ src/halo/
   agents/      one function per agent, each returning an Outcome; M6 adds the
                supervisor, the shared bounded loop and the four specialists
   seed/        deterministic corpus generator + the written Atlas corpus
+  infra.py     what would survive `terraform destroy`, checked before it runs
   cli.py       `halo quote "..."`
-tests/         schema, invariant, determinism, contract and agent tests
-reference/     the earlier MCP sample this build grew out of
+tests/           schema, invariant, determinism, contract and agent tests
+infra/terraform/ five modules, no VPC, and an argument for each absence
+reference/       the earlier MCP sample this build grew out of
 ```
 
 ## Running a quote
@@ -207,6 +209,10 @@ halo run '{...}' --trace
 
 # M7 — the offline gates CI runs: fixtures, retrieval, grounding, red team
 halo gate
+
+# M8 — stand the stack up, tear it down, and check it left nothing behind
+make up
+make down
 
 # what this has cost so far
 halo spend
@@ -284,4 +290,4 @@ approval.margin_exception                  0.0ms  approved_by=usr-mwes00
 | M5 | One principal, end to end | done |
 | M6 | Supervisor, bounded specialists, human approval | done |
 | M7 | Observability and evaluation gates | done |
-| M8 | Terraform up, Terraform down | next |
+| M8 | Terraform up, Terraform down | done |

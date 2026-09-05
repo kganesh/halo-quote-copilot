@@ -455,6 +455,14 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
 
     sub.add_parser("gate", help="the offline evaluation gates CI runs")
 
+    teardown = sub.add_parser("teardown", help="check the stack tears down to nothing")
+    teardown.add_argument(
+        "--live",
+        action="store_true",
+        help="also ask Cost Explorer what the account was charged since the destroy",
+    )
+    teardown.add_argument("--days", type=int, default=2, help="days of billing to read")
+
     approve_ = sub.add_parser("approve", help="release a checkpoint and finish the quote")
     approve_.add_argument("checkpoint_id")
     approve_.add_argument("--json", action="store_true")
@@ -640,6 +648,30 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
             print("\nTRACE")
             print(telemetry.render_trace(spans.get_finished_spans()))
         return 0 if outcome.status is OutcomeStatus.COMPLETED else 2
+
+    if args.command == "teardown":
+        from halo import infra
+
+        findings = infra.check()
+        print(infra.report(findings))
+
+        if args.live:
+            # Cost Explorer is the only authority here: what bills after a
+            # teardown is by definition what Terraform did not create.
+            try:
+                charged = infra.verify_teardown(days=args.days)
+            except Exception as error:  # noqa: BLE001 - any failure is the answer
+                print(f"could not read Cost Explorer: {error}", file=sys.stderr)
+                return 1
+            if not charged:
+                print(f"\nNothing charged in the last {args.days} days.")
+            else:
+                print(f"\nStill charging over the last {args.days} days:")
+                for service, amount in charged:
+                    print(f"  {service:<44} ${amount}")
+                return 2
+
+        return 0 if not findings else 2
 
     if args.command == "gate":
         from halo.evals.gates import passed, report, run_all

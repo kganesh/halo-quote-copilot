@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "python-hcl2>=4.3",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.7",

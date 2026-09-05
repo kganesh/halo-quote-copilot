@@ -145,6 +145,20 @@ def check_grounding_rejects_a_paraphrase(chunks: list[Chunk]) -> GateResult:
     return GateResult("grounding", True)
 
 
+def check_teardown() -> list[GateResult]:
+    """Nothing in the stack survives `terraform destroy` or bills while idle.
+
+    M8's done-when, in the half that does not need an account. The other half is
+    `halo teardown --live`, which asks Cost Explorer the morning after.
+    """
+    from halo.infra import check
+
+    findings = check()
+    if not findings:
+        return [GateResult("terraform", True)]
+    return [GateResult(finding.resource, False, finding.problem) for finding in findings]
+
+
 async def run_all() -> dict[str, list[GateResult]]:
     """Every offline gate. The red-team set is one of them."""
     from halo.evals.redteam import run_offline
@@ -159,6 +173,7 @@ async def run_all() -> dict[str, list[GateResult]]:
         "retrieval": check_retrieval(GOLDEN, chunks),
         "grounding": [check_grounding_rejects_a_paraphrase(chunks)],
         "redteam": redteam,
+        "teardown": check_teardown(),
     }
 
 

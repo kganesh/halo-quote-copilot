@@ -37,7 +37,10 @@ jobs:
         run: pytest -q
 
       - name: Gates
-        # Exits 2 on a grounding, retrieval, fixture or red-team regression.
+        # Exits 2 on a grounding, retrieval, fixture, red-team or teardown
+        # regression — the last one parses infra/terraform and fails on anything
+        # that would survive a destroy, so a NAT gateway cannot arrive with a
+        # copied module and start billing.
         # M7's done-when: a regression fails the build rather than reaching a
         # demo. Everything here runs offline, so no credentials and no spend.
         run: halo gate
