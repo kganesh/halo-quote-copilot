@@ -41,6 +41,14 @@ def margin_policies(seed_dir: str | None = None) -> tuple[dict, ...]:
     return _table("margin_policies", seed_dir)
 
 
+def accounts(seed_dir: str | None = None) -> tuple[dict, ...]:
+    return _table("accounts", seed_dir)
+
+
+def sellers(seed_dir: str | None = None) -> tuple[dict, ...]:
+    return _table("sellers", seed_dir)
+
+
 def suppliers(seed_dir: str | None = None) -> tuple[dict, ...]:
     return _table("suppliers", seed_dir)
 

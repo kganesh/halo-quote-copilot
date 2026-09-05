@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from halo.platform.budget import BudgetTracker
+from halo.platform.identity import Principal
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,13 @@ class ToolSpec:
     name: str
     """Written as `server.tool`, so an audit row shows which system answered."""
     timeout_seconds: float = 10.0
+    scoped: bool = False
+    """Whether this tool answers per-account and therefore needs an identity.
+
+    A scoped tool is called with the gateway's principal attached. An unscoped
+    one is not: a price is a price whoever asks, and passing identity to a tool
+    that cannot use it would make every audit row look like an access decision.
+    """
 
     @property
     def server(self) -> str:
@@ -65,6 +73,12 @@ class ToolCall:
     error: str | None = None
     duration_ms: float = 0.0
     replayed: bool = False
+    as_principal: str | None = None
+    """The user this call was made as, on a scoped tool. `None` on the rest.
+
+    The principal is recorded here rather than merged into `arguments`, so the
+    audit keeps saying what the model asked for and says separately who it was
+    asked as. Those are different facts and an investigation needs both."""
 
     @property
     def ok(self) -> bool:
@@ -92,6 +106,7 @@ class _GatewayPolicy:
 
     allowed: dict[str, ToolSpec]
     tracker: BudgetTracker | None = None
+    principal: Principal | None = None
     _audit: list[ToolCall] = field(default_factory=list)
     _seen: dict[str, ToolCall] = field(default_factory=dict)
 
@@ -121,6 +136,18 @@ class _BaseGateway(_GatewayPolicy):
         if spec is None:
             return self._refuse(name, arguments, f"tool {name!r} is not in this agent's catalog")
 
+        # Identity is attached here or the call does not happen. The model never
+        # supplies it: a `principal` argument in a tool_use block is the model
+        # asking to choose who it is, which is refused rather than overwritten,
+        # because silently correcting it would hide the attempt.
+        if spec.scoped:
+            if "principal" in arguments:
+                return self._refuse(name, arguments, "identity is not an argument a caller may set")
+            if self.principal is None:
+                return self._refuse(
+                    name, arguments, f"tool {name!r} is scoped and this gateway has no principal"
+                )
+
         key = self._key(name, arguments)
         if (previous := self._seen.get(key)) is not None:
             replay = ToolCall(
@@ -139,10 +166,20 @@ class _BaseGateway(_GatewayPolicy):
             self.tracker.check()
 
         started = time.monotonic()
-        call = ToolCall(id=self._next_id(), name=name, arguments=arguments)
+        call = ToolCall(
+            id=self._next_id(),
+            name=name,
+            arguments=arguments,
+            as_principal=self.principal.user_id if spec.scoped and self.principal else None,
+        )
+        invocation = (
+            {**arguments, "principal": self.principal.model_dump(mode="json")}
+            if spec.scoped and self.principal is not None
+            else arguments
+        )
         try:
             call.result = await asyncio.wait_for(
-                self._invoke(spec, arguments), timeout=spec.timeout_seconds
+                self._invoke(spec, invocation), timeout=spec.timeout_seconds
             )
             # A tool that answers "no capacity for that" returns an error field
             # instead of raising an exception. That is a business answer, not a
@@ -170,8 +207,9 @@ class InProcessGateway(_BaseGateway):
         functions: dict[str, Any],
         allowed: dict[str, ToolSpec],
         tracker: BudgetTracker | None = None,
+        principal: Principal | None = None,
     ) -> None:
-        super().__init__(allowed=allowed, tracker=tracker)
+        super().__init__(allowed=allowed, tracker=tracker, principal=principal)
         self._functions = functions
 
     async def _invoke(self, spec: ToolSpec, arguments: dict[str, Any]) -> Any:
@@ -200,8 +238,9 @@ class McpGateway(_BaseGateway):
         servers: dict[str, list[str]],
         allowed: dict[str, ToolSpec],
         tracker: BudgetTracker | None = None,
+        principal: Principal | None = None,
     ) -> None:
-        super().__init__(allowed=allowed, tracker=tracker)
+        super().__init__(allowed=allowed, tracker=tracker, principal=principal)
         self._servers = servers
         self._sessions: dict[str, Any] = {}
         self._stack: Any = None

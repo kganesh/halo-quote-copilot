@@ -22,6 +22,10 @@ class QuoteRequest(BaseModel):
     to invent.
     """
 
+    account_id: str | None = None
+    """The customer this is for. Optional, because a seller often asks about a
+    product before naming the account, and required before a quote is assembled:
+    a quote with no account is not a quote anyone can send."""
     product_description: str = Field(min_length=1)
     quantity: int | None = Field(default=None, ge=1)
     decoration_method: DecorationMethod | None = None

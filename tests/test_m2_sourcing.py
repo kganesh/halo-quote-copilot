@@ -15,6 +15,8 @@ from halo.agents.sourcing import (
 )
 from halo.platform.gateway import ToolCall
 
+ACCOUNT = "acct-mwes02"
+
 
 def a_decision(**overrides) -> SourcingDecision:
     return SourcingDecision(
@@ -118,7 +120,7 @@ class TestVerify:
 
 class TestAssemble:
     def test_a_verified_decision_becomes_a_cited_quote(self):
-        quote = assemble(a_decision(), an_audit())
+        quote = assemble(a_decision(), an_audit(), account_id=ACCOUNT)
 
         assert quote.subtotal == Decimal("11890.00")
         # 11,890 product + 66 setup + 775 run (1.55 x 500) + 294 freight
@@ -126,7 +128,7 @@ class TestAssemble:
         assert {c.ref for c in quote.all_citations} == {"tc-0002", "tc-0003", "tc-0005"}
 
     def test_every_citation_names_the_tool_that_produced_it(self):
-        quote = assemble(a_decision(), an_audit())
+        quote = assemble(a_decision(), an_audit(), account_id=ACCOUNT)
         by_ref = {c.ref: c.supporting_text for c in quote.all_citations}
         assert "pim_oms.get_price" in by_ref["tc-0002"]
         assert "shipping.estimate_freight" in by_ref["tc-0005"]
@@ -141,9 +143,14 @@ class TestToolDeclarations:
         assert {t["name"] for t in TOOLS} == set(TOOL_ROUTES)
 
     def test_every_route_points_at_a_real_server_function(self):
-        from halo.mcp_servers import pim_oms, shipping, supplier
+        from halo.mcp_servers import accounts, pim_oms, shipping, supplier
 
-        modules = {"pim_oms": pim_oms, "supplier": supplier, "shipping": shipping}
+        modules = {
+            "accounts": accounts,
+            "pim_oms": pim_oms,
+            "supplier": supplier,
+            "shipping": shipping,
+        }
         for route in TOOL_ROUTES.values():
             server_name, tool_name = route.split(".", 1)
             assert callable(getattr(modules[server_name], tool_name)), route
@@ -152,9 +159,14 @@ class TestToolDeclarations:
     def test_declared_required_arguments_are_real_parameters(self, tool):
         import inspect
 
-        from halo.mcp_servers import pim_oms, shipping, supplier
+        from halo.mcp_servers import accounts, pim_oms, shipping, supplier
 
-        modules = {"pim_oms": pim_oms, "supplier": supplier, "shipping": shipping}
+        modules = {
+            "accounts": accounts,
+            "pim_oms": pim_oms,
+            "supplier": supplier,
+            "shipping": shipping,
+        }
         server_name, tool_name = TOOL_ROUTES[tool["name"]].split(".", 1)
         parameters = inspect.signature(getattr(modules[server_name], tool_name)).parameters
         for argument in tool["input_schema"]["properties"]:
@@ -169,7 +181,7 @@ class TestOpenQuestionsAreNotFailures:
     def test_open_questions_do_not_block_a_quote(self):
         decision = a_decision(open_questions=["Garment colour not specified"])
         assert verify(decision, an_audit()) == []
-        assert assemble(decision, an_audit()).total == Decimal("13025.00")
+        assert assemble(decision, an_audit(), account_id=ACCOUNT).total == Decimal("13025.00")
 
     def test_an_unsourced_figure_is_still_a_blocker(self):
         decision = a_decision(unresolved=["no freight quote available"])

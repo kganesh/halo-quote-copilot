@@ -31,7 +31,7 @@ from halo.platform.budget import BudgetExceeded, BudgetTracker
 from halo.platform.envelope import EVIDENCE_RULE, Evidence, wrap
 from halo.platform.gateway import ToolCall, ToolGateway
 from halo.platform.guardrails import Guardrail, GuardrailVerdict, Surface
-from halo.platform.identity import Principal
+from halo.platform.identity import Principal, is_denial
 from halo.platform.outcome import Outcome, OutcomeStatus
 
 AGENT_NAME = "sourcing"
@@ -80,6 +80,12 @@ Work in this order:
 5. `earliest_ship_date` for the supplier that can actually do the run.
 6. `estimate_freight` to the destination state.
 
+If the request names an account, call `get_account` for it first. A refusal is
+an answer: report it and stop. Do not continue with details you were given
+earlier in this conversation, and do not quote the account from memory. You are
+not being asked to be careful here — the run is checked, and a quote assembled
+after a refusal is discarded.
+
 `promised_ship_date` is the `ship_date` string that `earliest_ship_date` returned,
 copied exactly. Do not compute it, adjust it, or work backwards from the date the
 customer asked for. If the supplier's date is later than the customer's date,
@@ -92,6 +98,18 @@ from a different figure. Both are checked.
 {evidence_rule}"""
 
 TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "get_account",
+        "description": (
+            "The customer record for the account this quote is for. Returns a 403 "
+            "if the account is not one you may read."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"account_id": {"type": "string"}},
+            "required": ["account_id"],
+        },
+    },
     {
         "name": "search_products",
         "description": "Find catalogue SKUs matching a plain-English product description.",
@@ -185,6 +203,7 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 TOOL_ROUTES = {
+    "get_account": "accounts.get_account",
     "search_products": "pim_oms.search_products",
     "get_price": "pim_oms.get_price",
     "check_inventory": "supplier.check_inventory",
@@ -331,11 +350,17 @@ def _citation(field_name: str, call_id: str, audit: list[ToolCall]) -> Citation:
     )
 
 
-def assemble(decision: SourcingDecision, audit: list[ToolCall]) -> Quote:
-    """Turn a verified decision into a Quote. Call `verify` first."""
+def assemble(decision: SourcingDecision, audit: list[ToolCall], *, account_id: str) -> Quote:
+    """Turn a verified decision into a Quote. Call `verify` first.
+
+    `account_id` is passed in rather than read off the decision. The model does
+    not get to say who the quote is for: that was settled at admission, and a
+    quote addressed to an account the principal cannot read is the thing M5
+    exists to prevent.
+    """
     return Quote(
         request_id=f"req-{len(audit):04d}",
-        account_id="acct-mwest02",
+        account_id=account_id,
         lines=[
             QuoteLine(
                 sku=decision.sku,
@@ -472,6 +497,23 @@ async def source_quote(
     decision = decision_result.parsed
     audit = gateway.audit
 
+    # Design rule 03, enforced rather than requested. The prompt asks the model
+    # to report a refusal; this makes it so whether or not the model complied.
+    # The failure being prevented is specific: the model already has the account
+    # in its context from an earlier turn, the tool says no, and it answers from
+    # what it is still holding. Nothing in the answer looks wrong.
+    if denied := [call for call in audit if is_denial(call.error)]:
+        return Outcome(
+            status=OutcomeStatus.REFUSED,
+            agent=AGENT_NAME,
+            escalation_reason=(
+                "a tool refused this principal and the run cannot continue: "
+                + "; ".join(f"{call.name} ({call.id}) {call.error}" for call in denied)
+            ),
+            next_state="denied_by_scope",
+            usage=tracker.usage,
+        )
+
     # What the seller would read, checked before anything is assembled. The
     # figures are already tied to tool calls by `verify`; this catches the other
     # half, where the prose around them promises something no tool can give.
@@ -509,7 +551,7 @@ async def source_quote(
             usage=tracker.usage,
         )
 
-    quote = assemble(decision, audit)
+    quote = assemble(decision, audit, account_id=request.account_id or principal.account_ids[0])
     payload = quote.model_dump(mode="json")
     payload["open_questions"] = decision.open_questions
     # A quote can be correct and still have been quoted at while something tried

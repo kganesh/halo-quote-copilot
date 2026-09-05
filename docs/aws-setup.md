@@ -279,7 +279,83 @@ needs no account and spends nothing.
 
 ---
 
-## 7. Validate
+## 7. Identity (M5)
+
+Optional for a local run, required before anything is exposed. Without it the
+CLI admits the development claims in `cli.py`, which are shaped exactly like the
+authorizer's and go through the same `principal_from_claims`. There is no second
+way to build a principal.
+
+The pool carries two custom attributes and one group per role. The attributes are
+the seller's scope, so they belong in the directory rather than in a table this
+code owns:
+
+```bash
+POOL=$(aws cognito-idp create-user-pool \
+  --pool-name halo-quote-copilot \
+  --schema \
+    Name=tenant_id,AttributeDataType=String,Mutable=true \
+    Name=account_ids,AttributeDataType=String,Mutable=true \
+  --query 'UserPool.Id' --output text)
+
+CLIENT=$(aws cognito-idp create-user-pool-client \
+  --user-pool-id "$POOL" --client-name halo-cli \
+  --explicit-auth-flows ALLOW_USER_PASSWORD_AUTH ALLOW_REFRESH_TOKEN_AUTH \
+  --query 'UserPoolClient.ClientId' --output text)
+
+for group in halo-seller halo-sales-manager halo-operations; do
+  aws cognito-idp create-group --user-pool-id "$POOL" --group-name "$group"
+done
+
+aws cognito-idp admin-create-user \
+  --user-pool-id "$POOL" --username dana.whitfield \
+  --user-attributes \
+    Name=custom:tenant_id,Value=tnt-mwest1 \
+    Name=custom:account_ids,Value=acct-mwes02,acct-mwes03
+aws cognito-idp admin-add-user-to-group \
+  --user-pool-id "$POOL" --username dana.whitfield --group-name halo-seller
+```
+
+The API Gateway HTTP API authorizer then verifies the token and passes the
+claims through:
+
+```bash
+aws apigatewayv2 create-authorizer \
+  --api-id "$API" --name halo-jwt --authorizer-type JWT \
+  --identity-source '$request.header.Authorization' \
+  --jwt-configuration \
+    Issuer=https://cognito-idp.$AWS_REGION.amazonaws.com/$POOL,Audience=$CLIENT
+```
+
+Three things about this that are easy to get wrong:
+
+- **The ID token, not the access token.** Both are signed by the same key and
+  both pass the authorizer. Only the ID token carries `custom:` attributes, so
+  an access token produces a principal with no tenant. `admission.py` refuses it
+  by name rather than letting it fail as a missing claim three checks later.
+- **`custom:account_ids` is a comma-separated string.** Cognito custom
+  attributes have no list type. Admission parses, trims and de-duplicates it.
+- **The authorizer verifies; this code does not.** It compares `iss` and `aud`
+  when they are configured, re-checks `exp`, and otherwise trusts the gateway.
+  Pass `issuer` and `audience` in a deployed configuration — a route wired to
+  the wrong pool presents a perfectly valid token belonging to a stranger.
+
+Cognito's free tier covers a practice pool: 10,000 monthly active users, and
+nothing here is billed while idle.
+
+Try both sides of the boundary without any of the above:
+
+```bash
+halo account acct-mwes02    # in scope
+halo account acct-mwes00    # 403 from the tool, exit code 2
+halo account --claims '{"sub":"usr-mwes00","cognito:groups":"halo-sales-manager",
+                        "custom:tenant_id":"tnt-mwest1","custom:account_ids":"acct-mwes00",
+                        "token_use":"id"}' acct-mwes00
+```
+
+---
+
+## 8. Validate
 
 ```bash
 halo doctor

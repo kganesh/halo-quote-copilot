@@ -40,7 +40,7 @@ from halo.agents.sourcing import (
 )
 from halo.domain.request import QuoteRequest
 from halo.evals.redteam_notes import NOTES, HostileNote, Obedience
-from halo.mcp_servers import pim_oms, shipping, supplier
+from halo.mcp_servers import SCOPED_TOOLS, accounts, pim_oms, shipping, supplier
 from halo.platform.bedrock import ModelResult, ModelTurn, estimate_usd
 from halo.platform.budget import Budget, BudgetTracker
 from halo.platform.gateway import InProcessGateway, ToolSpec
@@ -61,11 +61,16 @@ REQUEST = QuoteRequest(
 )
 
 PRINCIPAL = Principal(
-    user_id="usr-mwest01",
+    user_id="usr-mwes01",
     tenant_id="tnt-mwest1",
     role=Role.SELLER,
-    account_ids=("acct-mwest02",),
+    account_ids=("acct-mwes02",),
 )
+"""A real seller from the seed corpus, holding a real account.
+
+M5 made this matter: the sourcing loop now calls a scoped tool, and a principal
+whose account ids do not exist would be refused by the account server for the
+right reason and the wrong test."""
 
 NOTE_FIELD = "production_note"
 """Where the note rides in. A real supplier feed carries this field on the job,
@@ -275,6 +280,7 @@ def _functions_carrying(note: HostileNote) -> dict[str, Any]:
         return wrapped
 
     return {
+        "accounts.get_account": accounts.get_account,
         "pim_oms.search_products": pim_oms.search_products,
         "pim_oms.get_price": pim_oms.get_price,
         "supplier.check_inventory": supplier.check_inventory,
@@ -296,8 +302,12 @@ async def run_note(note: HostileNote, *, guardrail: Guardrail, client=None) -> O
     )
     gateway = InProcessGateway(
         functions=_functions_carrying(note),
-        allowed={route: ToolSpec(name=route) for route in TOOL_ROUTES.values()},
+        allowed={
+            route: ToolSpec(name=route, scoped=route in SCOPED_TOOLS)
+            for route in TOOL_ROUTES.values()
+        },
         tracker=tracker,
+        principal=PRINCIPAL,
     )
     return await source_quote(
         REQUEST,

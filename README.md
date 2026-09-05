@@ -147,8 +147,8 @@ catalogue.
 ```
 src/halo/
   domain/      the synthetic HALO business: org, catalog, supply, atlas, quote, request
-  platform/    contracts every agent obeys: identity, budget, outcome, bedrock,
-               gateway, ledger, envelope, guardrails
+  platform/    contracts every agent obeys: identity, admission, budget, outcome,
+               bedrock, gateway, ledger, envelope, guardrails
   rag/         chunk, embed, store, bm25, hybrid retrieve, ingest, evaluate
   evals/       golden sets the CLI runs
   agents/      one function per agent, each returning an Outcome
@@ -189,6 +189,10 @@ halo eval
 # M4 — 20 hostile supplier notes through the sourcing loop (offline, free)
 halo redteam
 
+# M5 — read a customer account as a principal; exit 2 on a tool-level 403
+halo account acct-mwes02
+halo account acct-mwes00
+
 # what this has cost so far
 halo spend
 ```
@@ -213,8 +217,10 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
    or `refused`, and a stop must carry a reason (`platform/outcome.py`).
 2. **Evidence or escalate** — every figure in a `Quote` carries a `Citation`
    whose ref resolves to a document chunk or a tool call (`domain/quote.py`).
-3. **Identity is a token that travels** — `Principal` is frozen at admission and
-   enforced at the tool boundary, never by the agent (`platform/identity.py`).
+3. **Identity is a token that travels** — claims become a `Principal` in one
+   place, the gateway attaches it to every scoped call, and the account server
+   refuses out-of-scope reads itself. A denial ends the run
+   (`platform/admission.py`, `mcp_servers/accounts.py`).
 4. **Tool output is data, never instruction** — everything fetched arrives
    inside an evidence envelope it cannot close, and a guardrail checks both
    surfaces (`platform/envelope.py`, `platform/guardrails.py`).
@@ -231,7 +237,7 @@ is entirely invented, and design rule 02 says an uncited figure is not an answer
 | M2 | The MCP tool plane | done |
 | M3 | Atlas RAG with real citations | done |
 | M4 | Guardrails and the untrusted boundary | done |
-| M5 | One principal, end to end | next |
-| M6 | Supervisor, bounded specialists, human approval | |
+| M5 | One principal, end to end | done |
+| M6 | Supervisor, bounded specialists, human approval | next |
 | M7 | Observability and evaluation gates | |
 | M8 | Terraform up, Terraform down | |

@@ -23,26 +23,40 @@ from halo.doctor import render as doctor_render
 from halo.doctor import run as doctor_run
 from halo.domain.quote import Quote
 from halo.domain.request import QuoteRequest, UngroundedDraft
+from halo.mcp_servers import SCOPED_TOOLS
 from halo.platform import ledger
+from halo.platform.admission import AdmissionError, principal_from_claims
 from halo.platform.bedrock import DEFAULT_MODEL, DEFAULT_REGION, BedrockClient
 from halo.platform.budget import Budget, BudgetTracker
 from halo.platform.gateway import McpGateway, ToolSpec
 from halo.platform.guardrails import BedrockGuardrail, Guardrail, LocalGuardrail
-from halo.platform.identity import Principal, Role
+from halo.platform.identity import Principal
 from halo.platform.outcome import Outcome, OutcomeStatus
 from halo.rag.embed import TitanEmbedder
 from halo.rag.retrieve import AtlasRetriever
 from halo.rag.store import DEFAULT_DB, SqliteVectorStore
 
-# A placeholder until M5 creates a real principal from a Cognito token.
-DEMO_PRINCIPAL = Principal(
-    user_id="usr-mwest01",
-    tenant_id="tnt-mwest1",
-    role=Role.SELLER,
-    account_ids=("acct-mwest02", "acct-mwest03"),
-)
+DEV_CLAIMS = {
+    "sub": "usr-mwes01",
+    "cognito:groups": "halo-seller",
+    "custom:tenant_id": "tnt-mwest1",
+    "custom:account_ids": "acct-mwes02,acct-mwes03",
+    "token_use": "id",
+}
+"""Stand-in claims for a local run, shaped exactly like the authorizer's.
+
+They go through `principal_from_claims` like anything else, so the development
+path and the deployed path build a principal the same way. The seller and
+accounts are real rows in the seed corpus, which is what makes `--claims` worth
+having: swap in another seller and the denials are real denials.
+
+This is not an authentication bypass. There is no authentication here to bypass:
+the CLI runs as whoever is at the keyboard. What it must not become is a second
+way of constructing a principal, which is why it is claims and not a Principal.
+"""
 
 SERVERS = {
+    "accounts": [sys.executable, "-m", "halo.mcp_servers.accounts"],
     "pim_oms": [sys.executable, "-m", "halo.mcp_servers.pim_oms"],
     "supplier": [sys.executable, "-m", "halo.mcp_servers.supplier"],
     "shipping": [sys.executable, "-m", "halo.mcp_servers.shipping"],
@@ -51,13 +65,21 @@ SERVERS = {
 # The filtered catalog: exactly the tools this agent's role was granted. A
 # capacity scan reads more rows than a price lookup, so it gets a longer
 # timeout.
+TIMEOUTS = {
+    "accounts.get_account": 10,
+    "accounts.list_accounts": 10,
+    "pim_oms.search_products": 10,
+    "pim_oms.get_price": 10,
+    "supplier.check_inventory": 20,
+    "supplier.get_decoration_charges": 10,
+    "supplier.earliest_ship_date": 20,
+    "shipping.estimate_freight": 10,
+}
+
+# Whether a tool is scoped is read from `SCOPED_TOOLS`, not repeated here. A
+# catalog that could disagree with it would be a hole visible in neither file.
 CATALOG = {
-    "pim_oms.search_products": ToolSpec("pim_oms.search_products", 10),
-    "pim_oms.get_price": ToolSpec("pim_oms.get_price", 10),
-    "supplier.check_inventory": ToolSpec("supplier.check_inventory", 20),
-    "supplier.get_decoration_charges": ToolSpec("supplier.get_decoration_charges", 10),
-    "supplier.earliest_ship_date": ToolSpec("supplier.earliest_ship_date", 20),
-    "shipping.estimate_freight": ToolSpec("shipping.estimate_freight", 10),
+    name: ToolSpec(name, timeout, scoped=name in SCOPED_TOOLS) for name, timeout in TIMEOUTS.items()
 }
 
 ADVISOR_BUDGET = Budget(
@@ -273,6 +295,26 @@ def render_sourced(outcome: Outcome, audit: list) -> str:
     return "\n".join(lines)
 
 
+def _principal(args) -> Principal:
+    """The principal this run acts as.
+
+    `--claims` takes the JSON an API Gateway JWT authorizer would hand a Lambda.
+    Without it the development claims are used. Either way the same admission
+    code runs, so a claim shape that fails in production fails here too.
+    """
+    raw = getattr(args, "claims", None)
+    claims = json.loads(raw) if raw else DEV_CLAIMS
+    return principal_from_claims(claims)
+
+
+def _add_identity_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--claims",
+        metavar="JSON",
+        help="authorizer claims to act as; defaults to the development seller",
+    )
+
+
 def _add_guardrail_flag(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--guardrail",
@@ -297,14 +339,24 @@ def _guardrail(args) -> Guardrail | None:
     return LocalGuardrail()
 
 
-async def _source(args, client_factory) -> tuple[Outcome, list]:
+async def _account(args, principal: Principal):
+    """One scoped tool call, made as this principal."""
+    async with McpGateway(SERVERS, CATALOG, principal=principal) as gateway:
+        if args.account_id:
+            return await gateway.call("accounts.get_account", {"account_id": args.account_id})
+        return await gateway.call("accounts.list_accounts", {})
+
+
+async def _source(args, client_factory, principal: Principal) -> tuple[Outcome, list]:
     tracker = BudgetTracker(SOURCING_BUDGET)
     client = client_factory(region=args.region, model=args.model, tracker=tracker)
     request = QuoteRequest.model_validate_json(args.request_json)
-    async with McpGateway(SERVERS, CATALOG, tracker=tracker) as gateway:
+    # The principal reaches the servers through the gateway, not through the
+    # model. Every scoped call in this run is made as this user.
+    async with McpGateway(SERVERS, CATALOG, tracker=tracker, principal=principal) as gateway:
         outcome = await source_quote(
             request,
-            principal=DEMO_PRINCIPAL,
+            principal=principal,
             client=client,
             gateway=gateway,
             tracker=tracker,
@@ -332,6 +384,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     ask.add_argument("--limit", type=int, default=6, help="excerpts to supply")
     ask.add_argument("--json", action="store_true")
     _add_guardrail_flag(ask)
+    _add_identity_flags(ask)
 
     evaluate = sub.add_parser("eval", help="run the Atlas golden set")
     evaluate.add_argument("--region", default=DEFAULT_REGION)
@@ -344,6 +397,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     source.add_argument("--model", default=DEFAULT_MODEL)
     source.add_argument("--json", action="store_true")
     _add_guardrail_flag(source)
+    _add_identity_flags(source)
 
     redteam = sub.add_parser("redteam", help="run the hostile-note suite against the sourcing loop")
     redteam.add_argument(
@@ -354,13 +408,24 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     redteam.add_argument("--region", default=DEFAULT_REGION)
     redteam.add_argument("--model", default=DEFAULT_MODEL)
 
+    account = sub.add_parser("account", help="read a customer account as this principal")
+    account.add_argument("account_id", nargs="?", help="omit to list the accounts in scope")
+    _add_identity_flags(account)
+
     quote = sub.add_parser("quote", help="draft a quote from a seller's sentence")
     quote.add_argument("request", help="what the customer asked for, in plain English")
     quote.add_argument("--region", default=DEFAULT_REGION)
     quote.add_argument("--model", default=DEFAULT_MODEL)
     quote.add_argument("--json", action="store_true", help="emit the raw Outcome as JSON")
+    _add_identity_flags(quote)
 
     args = parser.parse_args(argv)
+
+    try:
+        principal = _principal(args) if hasattr(args, "claims") else None
+    except (AdmissionError, ValueError) as error:
+        print(f"not admitted: {error}", file=sys.stderr)
+        return 1
 
     if args.command == "doctor":
         checks, ok = doctor_run(args.region, args.model)
@@ -411,7 +476,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
             client = client_factory(region=args.region, model=args.model, tracker=tracker)
             outcome, retrieved = answer_policy_question(
                 args.question,
-                principal=DEMO_PRINCIPAL,
+                principal=principal,
                 client=client,
                 retriever=_retriever(args.region),
                 tracker=tracker,
@@ -448,7 +513,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
             client = client_factory(region=args.region, model=args.model, tracker=tracker)
             results = run_golden(
                 GOLDEN,
-                principal=DEMO_PRINCIPAL,
+                principal=principal,
                 client=client,
                 retriever=_retriever(args.region),
                 tracker=tracker,
@@ -483,6 +548,18 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
         )
         return 0 if stats["grounded"] == stats["total"] else 2
 
+    if args.command == "account":
+        # Straight through the gateway, with no model in the path. The point of
+        # this command is that the refusal comes from the tool: there is nothing
+        # here that could have decided to be careful instead.
+        call = asyncio.run(_account(args, principal))
+        print(f"as {principal.user_id} ({principal.role}, {principal.tenant_id})")
+        if call.ok:
+            print(json.dumps(call.result, indent=2))
+            return 0
+        print(f"{call.name} [{call.id}] {call.error}", file=sys.stderr)
+        return 2
+
     if args.command == "redteam":
         from halo.evals.redteam import report, run_offline
 
@@ -503,7 +580,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
 
     if args.command == "source":
         try:
-            outcome, audit = asyncio.run(_source(args, client_factory))
+            outcome, audit = asyncio.run(_source(args, client_factory, principal))
         except (anthropic.APIError, RuntimeError) as error:
             print(explain(error, region=args.region, model=args.model), file=sys.stderr)
             return 1
@@ -517,9 +594,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     tracker = BudgetTracker(DEFAULT_BUDGET)
     try:
         client = client_factory(region=args.region, model=args.model, tracker=tracker)
-        outcome = draft_quote(
-            args.request, principal=DEMO_PRINCIPAL, client=client, tracker=tracker
-        )
+        outcome = draft_quote(args.request, principal=principal, client=client, tracker=tracker)
     except (anthropic.APIError, RuntimeError) as error:
         print(explain(error, region=args.region, model=args.model), file=sys.stderr)
         return 1

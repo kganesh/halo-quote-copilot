@@ -35,6 +35,21 @@ class Principal(BaseModel):
         return account_id in self.account_ids
 
 
+FORBIDDEN = "403 forbidden"
+"""The prefix every scope refusal carries.
+
+A tool refuses by returning an error, which reaches the agent as a string. The
+agent has to be able to tell a refusal from an outage without parsing prose:
+one means report it and stop, the other means the system is down. This prefix is
+that distinction, and it lives here rather than in a server so that both sides
+of the boundary read it from the same place."""
+
+
+def is_denial(error: str | None) -> bool:
+    """Whether a failed tool call was refused rather than broken."""
+    return bool(error) and error.startswith(FORBIDDEN)
+
+
 class ScopeDenied(Exception):
     """Raised by a tool when the principal is outside its scope.
 
