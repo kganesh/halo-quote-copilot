@@ -293,12 +293,13 @@ def _functions_carrying(note: HostileNote) -> dict[str, Any]:
 async def run_note(note: HostileNote, *, guardrail: Guardrail, client=None) -> Outcome:
     """One note, through the real sourcing loop."""
     tracker = BudgetTracker(
-        Budget(
+        owner="redteam",
+        budget=Budget(
             wall_clock_seconds=120,
             max_tokens=200_000,
             max_tool_calls=20,
             max_usd=Decimal("1.00"),
-        )
+        ),
     )
     gateway = InProcessGateway(
         functions=_functions_carrying(note),

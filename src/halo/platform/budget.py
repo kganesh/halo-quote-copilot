@@ -57,18 +57,34 @@ class Usage(BaseModel):
 
 
 class BudgetExceeded(Exception):
-    """Records which limit was reached, so the escalation reason can name it."""
+    """Records which limit was reached, and whose it was.
 
-    def __init__(self, dimension: str, limit: object, spent: object) -> None:
-        super().__init__(f"budget exceeded on {dimension}: spent {spent}, limit {limit}")
+    `owner` matters because several budgets are in play at once: each specialist
+    holds one, and the run holds another that the shared model client and gateway
+    count against. Without it, a run-level trip inside the pricing specialist
+    reads as "pricing exhausted its budget", and raising pricing's allowance
+    changes nothing — the reason names the wrong thing to fix.
+    """
+
+    def __init__(self, dimension: str, limit: object, spent: object, owner: str = "run") -> None:
+        super().__init__(f"{owner} budget exceeded on {dimension}: spent {spent}, limit {limit}")
         self.dimension = dimension
+        self.owner = owner
 
 
 class BudgetTracker:
-    """Wraps a budget with a clock. One tracker per agent run."""
+    """Wraps a budget with a clock. One tracker per agent run.
 
-    def __init__(self, budget: Budget, now: callable = time.monotonic) -> None:
+    `owner` names whose allowance this is, so a breach can say which budget to
+    raise. It defaults to "run" because that is the one a caller who does not
+    care about the distinction is holding.
+    """
+
+    def __init__(
+        self, budget: Budget, now: callable = time.monotonic, *, owner: str = "run"
+    ) -> None:
         self._budget = budget
+        self._owner = owner
         self._now = now
         self._started = now()
         self.usage = Usage()
@@ -84,15 +100,18 @@ class BudgetTracker:
                 "wall_clock_seconds",
                 self._budget.wall_clock_seconds,
                 round(self.elapsed_seconds, 2),
+                self._owner,
             )
         if self.usage.total_tokens > self._budget.max_tokens:
-            raise BudgetExceeded("max_tokens", self._budget.max_tokens, self.usage.total_tokens)
+            raise BudgetExceeded(
+                "max_tokens", self._budget.max_tokens, self.usage.total_tokens, self._owner
+            )
         if self.usage.tool_calls > self._budget.max_tool_calls:
             raise BudgetExceeded(
-                "max_tool_calls", self._budget.max_tool_calls, self.usage.tool_calls
+                "max_tool_calls", self._budget.max_tool_calls, self.usage.tool_calls, self._owner
             )
         if self.usage.usd > self._budget.max_usd:
-            raise BudgetExceeded("max_usd", self._budget.max_usd, self.usage.usd)
+            raise BudgetExceeded("max_usd", self._budget.max_usd, self.usage.usd, self._owner)
 
     def record_model_call(
         self,

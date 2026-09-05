@@ -28,7 +28,7 @@ from halo.domain.request import QuoteRequest, UngroundedDraft
 from halo.mcp_servers import SCOPED_TOOLS
 from halo.platform import ledger
 from halo.platform.admission import AdmissionError, principal_from_claims
-from halo.platform.bedrock import DEFAULT_MODEL, DEFAULT_REGION, BedrockClient
+from halo.platform.bedrock import DEFAULT_MODEL, DEFAULT_REGION, BedrockClient, UnpricedModel
 from halo.platform.budget import Budget, BudgetTracker
 from halo.platform.checkpoint import ApprovalError, FileCheckpointStore, approve
 from halo.platform.gateway import McpGateway, ToolSpec
@@ -178,6 +178,8 @@ class SetupError(Exception):
 
 def explain(error: Exception, *, region: str, model: str) -> str:
     """Turn an SDK or credential failure into an instruction."""
+    if isinstance(error, UnpricedModel):
+        return str(error)
     if isinstance(error, anthropic.NotFoundError):
         return (
             f"{model} is not available to this account in {region}.\n"
@@ -344,7 +346,7 @@ def _guardrail(args) -> Guardrail | None:
 
 async def _run(args, client_factory, principal: Principal):
     """M6: the supervisor, over the same gateway the single loop used."""
-    tracker = BudgetTracker(SOURCING_BUDGET)
+    tracker = BudgetTracker(SOURCING_BUDGET, owner="run")
     client = client_factory(region=args.region, model=args.model, tracker=tracker)
     request = QuoteRequest.model_validate_json(args.request_json)
     async with McpGateway(SERVERS, CATALOG, tracker=tracker, principal=principal) as gateway:
@@ -368,7 +370,7 @@ async def _account(args, principal: Principal):
 
 
 async def _source(args, client_factory, principal: Principal) -> tuple[Outcome, list]:
-    tracker = BudgetTracker(SOURCING_BUDGET)
+    tracker = BudgetTracker(SOURCING_BUDGET, owner="source")
     client = client_factory(region=args.region, model=args.model, tracker=tracker)
     request = QuoteRequest.model_validate_json(args.request_json)
     # The principal reaches the servers through the gateway, not through the
@@ -512,7 +514,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
         return 0
 
     if args.command == "ask":
-        tracker = BudgetTracker(ADVISOR_BUDGET)
+        tracker = BudgetTracker(ADVISOR_BUDGET, owner="ask")
         try:
             client = client_factory(region=args.region, model=args.model, tracker=tracker)
             outcome, retrieved = answer_policy_question(
@@ -543,12 +545,13 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
         from halo.rag.evaluate import run_golden, summarise
 
         tracker = BudgetTracker(
-            Budget(
+            owner="eval",
+            budget=Budget(
                 wall_clock_seconds=1800,
                 max_tokens=2_000_000,
                 max_tool_calls=0,
                 max_usd=Decimal("2.00"),
-            )
+            ),
         )
         try:
             client = client_factory(region=args.region, model=args.model, tracker=tracker)
@@ -675,7 +678,7 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
             print(render_sourced(outcome, audit))
         return 0 if outcome.status is OutcomeStatus.COMPLETED else 2
 
-    tracker = BudgetTracker(DEFAULT_BUDGET)
+    tracker = BudgetTracker(DEFAULT_BUDGET, owner="quote")
     try:
         client = client_factory(region=args.region, model=args.model, tracker=tracker)
         outcome = draft_quote(args.request, principal=principal, client=client, tracker=tracker)

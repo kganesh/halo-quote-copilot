@@ -339,3 +339,44 @@ class TestTheCommands:
 
         assert cli.main(["approve", "chk-seller"]) == 1
         assert "seller who raised it" in capsys.readouterr().err
+
+
+class TestWhichBudgetRanOut:
+    """The run's budget and a specialist's are different budgets. A breach has to
+    name the one that was actually reached, or the reason sends someone to raise
+    a limit that had room left."""
+
+    async def test_a_specialist_breach_names_the_specialist(self, store, monkeypatch):
+        monkeypatch.setattr(supervisor, "PRICING", replace(PRICING, budget=TINY))
+        outcome, _, _ = await run(HEALTHY_SKU, store)
+
+        assert "pricing exhausted its budget" in outcome.escalation_reason
+        assert "pricing budget exceeded on max_tokens" in outcome.escalation_reason
+
+    async def test_a_run_breach_says_so_and_still_names_where_it_happened(self, store):
+        """The shared client counts against the run's budget, so it can trip
+        while any specialist is working. Both facts are useful: which budget, and
+        what was in flight."""
+        from halo.platform.budget import BudgetTracker
+
+        gateway = a_gateway()
+        client = SpecialistModel(gateway, sku=HEALTHY_SKU, quantity=500)
+        run_tracker = BudgetTracker(TINY, owner="run")
+
+        # A client that charges the run's budget, the way BedrockClient does.
+        original = client.converse
+
+        def charging(**kwargs):
+            run_tracker.check()
+            turn = original(**kwargs)
+            run_tracker.record_model_call(turn.input_tokens, turn.output_tokens, turn.usd)
+            return turn
+
+        client.converse = charging
+        outcome = await supervisor.draft(
+            a_request(), principal=SELLER, client=client, gateway=gateway, store=store
+        )
+
+        assert "the run budget ran out while pricing was working" in outcome.escalation_reason
+        assert outcome.next_state == "await_budget_increase"
+        assert outcome.payload is None

@@ -200,3 +200,90 @@ class TestQuoteProvenance:
 
     def test_all_citations_collects_every_source(self):
         assert len(self._quote().all_citations) == 3
+
+
+class TestABudgetSaysWhoseItIs:
+    """A run has several budgets open at once. A breach that does not name one
+    sends someone to raise a limit that was never reached."""
+
+    def a_tracker(self, owner: str) -> BudgetTracker:
+        return BudgetTracker(
+            Budget(
+                wall_clock_seconds=99,
+                max_tokens=10,
+                max_tool_calls=0,
+                max_usd=Decimal("0.01"),
+            ),
+            owner=owner,
+        )
+
+    def test_the_owner_is_on_the_exception_and_in_its_message(self):
+        tracker = self.a_tracker("pricing")
+        tracker.record_model_call(50, 50, Decimal("0"))
+
+        with pytest.raises(BudgetExceeded) as exc:
+            tracker.check()
+
+        assert exc.value.owner == "pricing"
+        assert "pricing budget exceeded on max_tokens" in str(exc.value)
+
+    def test_the_default_owner_is_the_run(self):
+        """What a caller who does not care about the distinction is holding."""
+        tracker = BudgetTracker(
+            Budget(wall_clock_seconds=99, max_tokens=1, max_tool_calls=0, max_usd=Decimal("1"))
+        )
+        tracker.record_model_call(5, 5, Decimal("0"))
+
+        with pytest.raises(BudgetExceeded) as exc:
+            tracker.check()
+        assert exc.value.owner == "run"
+
+
+class TestAnUnpricedModelCannotRun:
+    """A dollar budget is only a limit if every call can be priced.
+
+    An unpriced call adds zero to `usage.usd`, so `max_usd` is never reached and
+    the run proceeds under a cap that has stopped existing. Nothing errors, and
+    the ledger reports $0.00 for a run that really spent money.
+    """
+
+    def test_a_model_with_no_rate_card_entry_is_refused_at_construction(self):
+        from halo.platform.bedrock import BedrockClient, UnpricedModel
+
+        with pytest.raises(UnpricedModel, match="no rate card entry"):
+            BedrockClient(model="us.anthropic.claude-nonesuch-9")
+
+    def test_the_message_says_how_to_fix_it(self):
+        from halo.platform.bedrock import UnpricedModel
+
+        message = str(UnpricedModel("us.anthropic.claude-nonesuch-9"))
+        assert "PRICE_PER_MTOK" in message
+        assert "list-foundation-model-agreement-offers" in message
+
+    def test_it_reads_as_a_setup_problem_not_a_crash(self):
+        """A RuntimeError, so the CLI's existing handlers already catch it."""
+        from halo.platform.bedrock import UnpricedModel
+
+        assert issubclass(UnpricedModel, RuntimeError)
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "us.anthropic.claude-sonnet-4-6",
+            "global.anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-6-20260101-v1:0",
+        ],
+    )
+    def test_every_id_format_of_a_priced_model_is_accepted(self, model):
+        """The guard must not reject a model we can price because of how the id
+        was written — that would make it a worse bug than the one it prevents."""
+        from halo.platform.bedrock import is_priced
+
+        assert is_priced(model)
+
+    def test_pricing_itself_still_returns_zero_rather_than_raising(self):
+        """The lookup is not the place to take a run down. The refusal happens
+        at construction, where there is something useful to say."""
+        from halo.platform.bedrock import estimate_usd
+
+        assert estimate_usd("us.anthropic.claude-nonesuch-9", 1_000, 1_000) == Decimal("0.00")

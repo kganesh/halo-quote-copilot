@@ -84,6 +84,38 @@ CACHE_WRITE_1H_MULTIPLIER = Decimal("2.00")
 """The 1-hour cache costs twice a fresh input token to write."""
 
 
+class UnpricedModel(RuntimeError):
+    """This model has no entry in the rate card, so its spend cannot be counted.
+
+    Raised when a client is constructed, not when a call is made. The dollar
+    limit on a budget is only a limit if every call can be priced: an unpriced
+    call adds zero to `usage.usd`, `max_usd` is never reached, and the run
+    proceeds under a cap that has quietly stopped existing. Nothing looks wrong
+    at any point, including in the ledger afterwards.
+
+    The fix is a line in `PRICE_PER_MTOK` read off the account's own rate card,
+    which is what the message says.
+
+    A `RuntimeError` so that the CLI's existing handlers catch it: this is a
+    setup problem, and it should read like the other setup problems rather than
+    arriving as a traceback.
+    """
+
+    def __init__(self, model: str) -> None:
+        super().__init__(
+            f"no rate card entry for {model!r}, so its cost cannot be counted and a "
+            "dollar budget could not stop a run using it. Add the model to "
+            "PRICE_PER_MTOK in platform/bedrock.py, reading the rates from "
+            "`aws bedrock list-foundation-model-agreement-offers` for your account."
+        )
+        self.model = model
+
+
+def is_priced(model: str) -> bool:
+    """Whether this model's spend can be counted."""
+    return _price_key(model) is not None
+
+
 def _price_key(model: str) -> str | None:
     """Reduce any Bedrock id format to the model family used as the price key.
 
@@ -166,9 +198,11 @@ def estimate_usd(
 ) -> Decimal:
     """Cost of one call.
 
-    An unknown model returns zero instead of raising an exception. A budget is a
-    safety limit. If an unrecognised price stopped the run, the safety limit
-    would become the thing that breaks the system.
+    An unknown model returns zero rather than raising: a pricing lookup is not
+    the place to take a run down, and callers that only want a number should get
+    one. The safety property lives one level up instead — `BedrockClient` refuses
+    to be constructed for a model it cannot price, so an unpriced model cannot
+    reach this function through a real run. See `UnpricedModel`.
     """
     key = _price_key(model)
     if key is None:
@@ -308,6 +342,13 @@ class BedrockClient:
         tracker: BudgetTracker | None = None,
     ) -> None:
         from anthropic import AnthropicBedrock, AnthropicBedrockMantle
+
+        # Before anything else. A model with no rate card entry makes every
+        # dollar budget in the process unenforceable, and the failure is silent
+        # in both directions: nothing errors, and the ledger reports $0.00 for a
+        # run that really spent money.
+        if not is_priced(model):
+            raise UnpricedModel(model)
 
         # An inference-profile id works only with InvokeModel. A bare id works
         # only with Mantle. Choosing the client from the id format keeps the two

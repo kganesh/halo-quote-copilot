@@ -94,7 +94,7 @@ async def run_specialist(
     runaway pricing loop cannot spend the supply specialist's allowance. The
     supervisor sums what they each used; it does not hand out one pool.
     """
-    tracker = BudgetTracker(specialist.budget)
+    tracker = BudgetTracker(specialist.budget, owner=specialist.name)
     system = (
         f"{specialist.system}\n\nToday is {today or date.today():%A %d %B %Y}.\n\n{EVIDENCE_RULE}"
     )
@@ -178,12 +178,23 @@ async def run_specialist(
         )
         _charge(tracker, result)
     except BudgetExceeded as exc:
-        # The done-when for M6. The reason names the specialist and the dimension,
-        # and no partial answer travels with it: a truncated report reads like a
-        # complete one two layers up.
+        # The done-when for M6. The reason names the dimension and no partial
+        # answer travels with it: a truncated report reads like a complete one
+        # two layers up.
+        #
+        # Which budget ran out is not always this specialist's. The shared model
+        # client and gateway count against the run's budget, and that one can
+        # trip while any specialist happens to be working. Saying "pricing
+        # exhausted its budget" then sends someone to raise a limit that was
+        # never reached.
+        reason = (
+            f"{specialist.name} exhausted its budget: {exc}"
+            if exc.owner == specialist.name
+            else f"the {exc.owner} budget ran out while {specialist.name} was working: {exc}"
+        )
         return finish(
             OutcomeStatus.ESCALATED,
-            escalation_reason=f"{specialist.name} exhausted its budget: {exc}",
+            escalation_reason=reason,
             next_state="await_budget_increase",
         )
 

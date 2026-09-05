@@ -152,7 +152,7 @@ async def draft(
     policy_evidence: list[Citation] = []
     policy_notes: list[str] = []
     if retriever is not None:
-        tracker = BudgetTracker(POLICY_BUDGET)
+        tracker = BudgetTracker(POLICY_BUDGET, owner="policy")
         policy_outcome, _ = answer_policy_question(
             _policy_question(request),
             principal=principal,
