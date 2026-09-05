@@ -1,5 +1,5 @@
 [project]
-name = "halo-quote-copilot"
+name = "halo-agentic-quote-service"
 version = "0.1.0"
 description = "Practice agentic platform: governed quote drafting on AWS Bedrock"
 requires-python = ">=3.12"

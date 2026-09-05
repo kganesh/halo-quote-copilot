@@ -30,7 +30,7 @@ The access key is something you *create* — there is nothing to look up, and th
 secret is shown exactly once. It is not your account number and not your console
 password.
 
-1. **IAM → Users → Create user.** Name it `halo-quote-copilot`. Do not give it
+1. **IAM → Users → Create user.** Name it `halo-agentic-quote-service`. Do not give it
    console access; this identity only makes API calls.
 2. On permissions, **Attach policies directly → Create inline policy → JSON**,
    and paste the policy from step 3 below. Skipping this produces a key that
@@ -236,7 +236,7 @@ Create it once:
 
 ```bash
 aws bedrock create-guardrail \
-  --name halo-quote-copilot \
+  --name halo-agentic-quote-service \
   --description "Quote drafting: no committed discounts, no legal commitments, no customer PII" \
   --blocked-input-messaging "This request cannot be processed." \
   --blocked-outputs-messaging "This answer was withheld by a guardrail." \
@@ -293,7 +293,7 @@ code owns:
 
 ```bash
 POOL=$(aws cognito-idp create-user-pool \
-  --pool-name halo-quote-copilot \
+  --pool-name halo-agentic-quote-service \
   --schema \
     Name=tenant_id,AttributeDataType=String,Mutable=true \
     Name=account_ids,AttributeDataType=String,Mutable=true \

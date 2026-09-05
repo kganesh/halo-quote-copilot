@@ -19,7 +19,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      project     = "halo-quote-copilot"
+      project     = "halo-agentic-quote-service"
       managed_by  = "terraform"
       environment = var.environment
     }

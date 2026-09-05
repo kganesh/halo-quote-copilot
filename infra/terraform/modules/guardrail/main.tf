@@ -81,7 +81,7 @@ resource "aws_bedrock_guardrail" "this" {
 # was checked against a different policy than the one on file is not auditable.
 resource "aws_bedrock_guardrail_version" "published" {
   guardrail_arn = aws_bedrock_guardrail.this.guardrail_arn
-  description   = "Applied by halo-quote-copilot"
+  description   = "Applied by halo-agentic-quote-service"
 }
 
 output "guardrail_id" { value = aws_bedrock_guardrail.this.guardrail_id }

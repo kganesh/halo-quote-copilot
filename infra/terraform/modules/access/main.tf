@@ -69,7 +69,7 @@ data "aws_iam_policy_document" "app" {
 
 resource "aws_iam_policy" "app" {
   name        = "${var.name}-access"
-  description = "What halo-quote-copilot needs: invoke, guard, write evidence, read own spend"
+  description = "What halo-agentic-quote-service needs: invoke, guard, write evidence, read own spend"
   policy      = data.aws_iam_policy_document.app.json
 }
 

@@ -24,7 +24,7 @@
 # expensive kind of unused code.
 
 locals {
-  name = "halo-quote-copilot-${var.environment}"
+  name = "halo-agentic-quote-service-${var.environment}"
 }
 
 data "aws_caller_identity" "current" {}

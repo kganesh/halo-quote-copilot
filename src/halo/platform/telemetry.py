@@ -38,7 +38,7 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
 
-SERVICE_NAME = "halo-quote-copilot"
+SERVICE_NAME = "halo-agentic-quote-service"
 SCOPE = "halo"
 
 STATE = "state"
