@@ -204,6 +204,7 @@ src/halo/
   agents/      one function per agent, each returning an Outcome; M6 adds the
                supervisor, the shared bounded loop and the four specialists
   seed/        deterministic corpus generator + the written Atlas corpus
+  readiness.py what is running versus what this stage requires
   infra.py     what would survive `terraform destroy`, checked before it runs
   cli.py       `halo quote "..."`
 tests/           schema, invariant, determinism, contract and agent tests
@@ -258,6 +259,10 @@ halo run '{...}' --trace
 
 # M7 — the offline gates CI runs: fixtures, retrieval, grounding, red team
 halo gate
+
+# what this deployment is actually running, and whether the stage allows it
+halo ready --stage local
+halo ready --stage production
 
 # M8 — stand the stack up, tear it down, and check it left nothing behind
 make up

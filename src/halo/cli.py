@@ -16,6 +16,7 @@ from decimal import Decimal
 
 import anthropic
 
+from halo import readiness
 from halo.agents.advisor import PolicyAnswer, answer_policy_question
 from halo.agents.drafter import draft_quote
 from halo.agents.sourcing import source_quote
@@ -39,6 +40,7 @@ from halo.platform.outcome import Outcome, OutcomeStatus
 from halo.rag.embed import TitanEmbedder
 from halo.rag.retrieve import AtlasRetriever
 from halo.rag.store import DEFAULT_DB, SqliteVectorStore
+from halo.readiness import Stage
 
 DEV_CLAIMS = {
     "sub": "usr-mwes01",
@@ -310,7 +312,14 @@ def _principal(args) -> Principal:
     """
     raw = getattr(args, "claims", None)
     claims = json.loads(raw) if raw else DEV_CLAIMS
-    return principal_from_claims(claims)
+    # Verified when configured. A route wired to the wrong user pool presents a
+    # perfectly valid token belonging to a stranger, and that is the failure
+    # these two catch; `halo ready` reports whether they are set.
+    return principal_from_claims(
+        claims,
+        issuer=os.environ.get("HALO_COGNITO_ISSUER"),
+        audience=os.environ.get("HALO_COGNITO_AUDIENCE"),
+    )
 
 
 def _add_identity_flags(parser: argparse.ArgumentParser) -> None:
@@ -455,6 +464,16 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
     _add_identity_flags(pending)
 
     sub.add_parser("gate", help="the offline evaluation gates CI runs")
+
+    ready = sub.add_parser(
+        "ready", help="what this deployment is running, and whether that is allowed"
+    )
+    ready.add_argument(
+        "--stage",
+        choices=tuple(str(s) for s in Stage),
+        default=str(Stage.LOCAL),
+        help="which contract to hold this deployment to",
+    )
 
     teardown = sub.add_parser("teardown", help="check the stack tears down to nothing")
     teardown.add_argument(
@@ -673,6 +692,13 @@ def main(argv: list[str] | None = None, *, client_factory=BedrockClient) -> int:
                 return 2
 
         return 0 if not findings else 2
+
+    if args.command == "ready":
+        assessments, ok = readiness.run(Stage(args.stage))
+        print(readiness.report(assessments, ok, Stage(args.stage)))
+        # Non-zero so a deploy step can gate on it. No AWS call was made getting
+        # here, so this is free to run on every deploy and every poll.
+        return 0 if ok else 2
 
     if args.command == "gate":
         from halo.evals.gates import passed, report, run_all
